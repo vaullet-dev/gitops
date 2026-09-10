@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vaullet — walking skeleton</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem;
+         margin: 4rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.4rem; margin-bottom: .25rem; }
+  p.sub { color: #6b7280; margin-top: 0; }
+  ol { padding-left: 1.2rem; }
+  li { margin: .3rem 0; }
+  code { background: #8881; padding: .1em .35em; border-radius: 3px; }
+  footer { margin-top: 2.5rem; font-size: .875rem; color: #6b7280;
+           border-top: 1px solid #8883; padding-top: 1rem; }
+</style>
+<h1>Vaullet</h1>
+<p class="sub">Walking skeleton — the delivery path, with nothing behind it yet.</p>
+<p>You are reading this over HTTPS, which means every hop below is working:</p>
+<ol>
+  <li>DNS <code>vaullet.dev</code> &rarr; Hetzner AX41, Ubuntu 26.04 LTS</li>
+  <li>ufw &rarr; klipper-lb &rarr; Traefik</li>
+  <li>a Gateway API <code>Gateway</code>, and an <code>HTTPRoute</code> that
+      attached itself to it from another namespace</li>
+  <li>a Let's Encrypt certificate that cert-manager issued by planting a
+      temporary <code>HTTPRoute</code> on the same Gateway</li>
+  <li>Service &rarr; Pod</li>
+  <li>and the manifest that put it here was synced by Argo CD from
+      <code>vaullet-dev/gitops</code>, not applied by hand</li>
+</ol>
+<p>Services land on this same path. Nothing about it changes when they do.</p>
+<footer>
+  Single node, single PSU: production <em>topology</em>, not production
+  <em>grade</em>. There is no Ingress object in this cluster — upstream retired
+  ingress-nginx in March 2026, so routing is Gateway API only.
+</footer>

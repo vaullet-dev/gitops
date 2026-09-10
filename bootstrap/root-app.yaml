@@ -1,0 +1,22 @@
+# The only object applied by hand. Everything else in the cluster is a child
+# of this app, so `kubectl apply` never appears in a runbook again.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vaullet-dev/gitops.git
+    targetRevision: main
+    path: clusters/prod
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

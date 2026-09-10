@@ -1,0 +1,110 @@
+# Wave 0. Traefik is the Gateway API implementation; ingress-nginx was retired
+# by upstream Kubernetes in March 2026 (no releases, no CVE fixes) and its
+# intended successor InGate was abandoned, so it is not an option on a public IP.
+#
+# Both Ingress providers are OFF on purpose. This cluster has no Ingress
+# objects and no IngressRoute objects -- routing is Gateway API or nothing,
+# so there is exactly one place to look when a route misbehaves.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://traefik.github.io/charts
+    chart: traefik
+    targetRevision: 41.5.0
+    helm:
+      values: |
+        providers:
+          kubernetesGateway:
+            enabled: true
+          kubernetesCRD:
+            enabled: false
+          kubernetesIngress:
+            enabled: false
+
+        # The chart creates a default IngressClass even with the Ingress
+        # provider off. Left on, a classless Ingress would be silently adopted
+        # by a controller that is not watching Ingress -- it would just never
+        # route, with nothing to show why. Remove the trap.
+        ingressClass:
+          enabled: false
+
+        gatewayClass:
+          enabled: true
+          name: traefik
+
+        gateway:
+          enabled: true
+          name: vaullet
+          annotations:
+            # cert-manager's gateway-shim reads this, walks the listeners, and
+            # creates one Certificate per distinct certificateRef secret name.
+            # Both HTTPS listeners below point at the SAME secret, so this is
+            # ONE cert with two SANs, not two certs.
+            #
+            # STAGING FIRST. Let's Encrypt production allows 5 duplicate certs
+            # per week; a broken HTTP-01 loop burns that in an afternoon and
+            # locks you out for days. Flip to letsencrypt-prod only after a
+            # staging cert has issued cleanly.
+            cert-manager.io/cluster-issuer: letsencrypt-staging
+          listeners:
+            # Port numbers here are the CONTAINER ports from the chart's `ports`
+            # section (web 8000 -> Service 80, websecure 8443 -> Service 443).
+            # Putting 80/443 here would silently produce a Gateway whose
+            # listeners match no entrypoint.
+            web:
+              port: 8000
+              protocol: HTTP
+              # The ACME HTTP-01 solver plants a temporary HTTPRoute; it lives
+              # in the Gateway's namespace, but hello lives in `hello`, so this
+              # has to be All rather than the default Same.
+              namespacePolicy:
+                from: All
+            websecure:
+              port: 8443
+              protocol: HTTPS
+              hostname: vaullet.dev
+              mode: Terminate
+              namespacePolicy:
+                from: All
+              certificateRefs:
+                - name: vaullet-dev-tls
+            www:
+              port: 8443
+              protocol: HTTPS
+              hostname: www.vaullet.dev
+              mode: Terminate
+              namespacePolicy:
+                from: All
+              certificateRefs:
+                - name: vaullet-dev-tls
+
+        service:
+          type: LoadBalancer     # klipper-lb binds this to the node IP
+
+        deployment:
+          replicas: 1            # one node: one replica is honest, not a compromise
+
+        resources:
+          requests: { cpu: 100m, memory: 128Mi }
+          limits:   { memory: 256Mi }
+
+        # Dashboard stays on, but unexposed -- reach it with port-forward.
+        api:
+          dashboard: true
+        ports:
+          traefik:
+            expose:
+              default: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ CreateNamespace=true ]

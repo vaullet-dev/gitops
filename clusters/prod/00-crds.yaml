@@ -1,0 +1,33 @@
+# Wave -2. CRDs before anything that has an opinion about them.
+#
+# Gateway API CRDs come from Traefik's own crds chart rather than a raw
+# kubectl apply of standard-install.yaml, so the version is pinned in git and
+# Argo owns the objects. gatewayAPI (standard channel), not
+# gatewayAPIExperimental -- nothing here needs TLSRoute or TCPRoute yet.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  source:
+    repoURL: https://traefik.github.io/charts
+    chart: traefik-crds
+    targetRevision: 1.18.0
+    helm:
+      values: |
+        traefik: false          # no IngressRoute/Middleware: Gateway API only
+        gatewayAPI: true
+        gatewayAPIExperimental: false
+        deleteOnUninstall: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # Gateway API CRDs exceed the 262144-byte annotation limit

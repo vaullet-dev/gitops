@@ -1,0 +1,39 @@
+# Wave -1. Must be running with Gateway API support switched on BEFORE the
+# Gateway exists, because the gateway-shim controller reacts to the
+# cert-manager.io/cluster-issuer annotation on the Gateway that Traefik creates
+# in wave 0. A cert-manager that started without gatewayAPI enabled will ignore
+# that annotation silently -- no event, no error, just no Certificate.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.21.1
+    helm:
+      values: |
+        crds:
+          enabled: true
+        # Since 1.15 this is no longer a feature gate, but it is still off by
+        # default. Without it the Gateway annotation does nothing.
+        config:
+          apiVersion: controller.config.cert-manager.io/v1alpha1
+          kind: ControllerConfiguration
+          gatewayAPI:
+            enabled: true
+        resources:
+          requests: { cpu: 10m, memory: 64Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

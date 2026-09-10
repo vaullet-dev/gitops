@@ -1,0 +1,45 @@
+# Wave 1: the Gateway API CRDs (wave -2) must exist before these parse, and the
+# Gateway they point at is created in wave 0.
+#
+# The solver is gatewayHTTPRoute, not ingress -- there is no Ingress controller
+# in this cluster to fall back on. cert-manager creates a short-lived HTTPRoute
+# attached to the Gateway's :80 listener for each challenge and deletes it after.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: predrag87arsic@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: vaullet
+                namespace: traefik
+                kind: Gateway
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: predrag87arsic@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: vaullet
+                namespace: traefik
+                kind: Gateway
