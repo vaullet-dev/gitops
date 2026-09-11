@@ -1,0 +1,28 @@
+# DANGER: argocd-cm is NOT empty in a stock install. It ships Argo's default
+# resource.exclusions and ignoreResourceUpdates rules -- including one for
+# Rollouts -- which cut the number of objects Argo watches. Replacing this
+# ConfigMap wholesale silently deletes all of that, and the only symptom is a
+# controller doing far more work than it should.
+#
+# This declares ONLY the accounts key, and the Application syncs it with
+# ServerSideApply. ConfigMap `data` tracks field ownership PER KEY, so Argo owns
+# `accounts.master` and the install keeps everything else. ServerSideDiff on the
+# annotation below stops Argo reporting this permanently OutOfSync for keys it
+# deliberately does not manage.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+  annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+data:
+  # login  -> may sign in to the UI
+  # apiKey -> may mint API tokens, which CI will want later
+  #
+  # The password is NOT here. It lives as a bcrypt hash in argocd-secret, set
+  # with kubectl -- a password hash does not belong in a public repository.
+  accounts.master: apiKey, login

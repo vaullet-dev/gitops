@@ -1,0 +1,18 @@
+# Safe to own outright: this ConfigMap is genuinely empty in a stock install.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-rbac-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # Deny by default. Unset, any authenticated identity falls through to
+  # whatever the built-in default happens to permit; stated explicitly, an
+  # account gets exactly what policy.csv grants it and nothing by accident.
+  policy.default: ""
+  policy.csv: |
+    g, master, role:admin
+  # Local accounts are a stopgap. The moment a second person needs access this
+  # should become SSO -- Dex is already running and can talk to GitHub.

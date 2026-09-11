@@ -22,3 +22,8 @@ spec:
     namespace: argocd
   syncPolicy:
     automated: { prune: true, selfHeal: true }
+    syncOptions:
+      # Load-bearing: argocd-cm is shared with the stock install, and only
+      # server-side apply keeps per-key field ownership so Argo's defaults
+      # survive. A client-side apply here would wipe them.
+      - ServerSideApply=true
