@@ -15,15 +15,13 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       the UI are both closed at the firewall. It is the kind of thing that is
       still sitting there in six months.
 
-- [ ] **Flip the certificate from staging to production.** Only after a
-      `letsencrypt-staging` cert has issued cleanly. Change the annotation in
-      `clusters/prod/traefik.yaml` to `letsencrypt-prod`, then delete the
-      staging secret so a fresh one is requested:
-      ```sh
-      kubectl -n traefik delete secret vaullet-dev-tls
-      ```
-      Let's Encrypt production allows 5 duplicate certs per week. Do not flip
-      this to debug a problem.
+- [x] ~~Flip the certificate from staging to production.~~ Done 2026-09-11.
+      `vaullet-dev-tls-4`, issuer `letsencrypt-prod`, SANs `vaullet.dev` and
+      `www.vaullet.dev`, verified from outside with a clean chain.
+      Lesson worth keeping: **`root` is the only app that reads git.**
+      Refreshing the `traefik` app just re-pulls Helm chart 41.5.0 and finds
+      nothing changed, because the annotation lives in the Application CR that
+      `root` owns. Refresh `root`, not the leaf.
 
 - [ ] **Untrack `.idea/`.** Six files are on `main`; `git add .` ran before the
       `.gitignore` existed, and a `.gitignore` does not untrack what is already
@@ -71,6 +69,30 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       the classic way to break HTTP-01. Gateway API precedence should rank
       cert-manager's exact-path solver route above it, but verify rather than
       trust that when debugging.
+
+## Deferred by decision, 2026-09-11
+
+- [ ] **Cluster topology: revisit when the first stateful service lands.**
+      Reviewed at 8% CPU / 3% memory actual usage, where nearly all consumption
+      is the control plane running itself. Adding worker nodes was rejected:
+      capacity is not the constraint, and workers leave `etcd members: 1`
+      untouched, so they buy no resilience at all.
+
+      The thing that is genuinely weak is quorum of one and
+      `PodDisruptionBudgets defined: 0`. Fixing that means **three RKE2 server
+      VMs on this box via libvirt** — the original T630 design, at no extra
+      cost — not more machines. Capacity fits: 3 x 4 vCPU / 16 GiB = 48 GiB,
+      leaving ~14 GiB for the host. What does not fit is the second 24 GiB
+      stage cluster, and this box has half the T630's cores.
+
+      Revisit at the first stateful service, because that is when RF=3, PDBs
+      and live drains stop being decoration.
+
+- [ ] **`local-path` is node-local.** Invisible on one node. The moment a
+      second node exists, a rescheduled pod cannot reach its volume. Decide
+      then between node affinity for stateful workloads or real replicated
+      storage — Longhorn on a single node is theatre, so it only becomes a real
+      option alongside the topology decision above.
 
 ## Architecture, not operations
 
