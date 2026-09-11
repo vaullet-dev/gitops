@@ -11,7 +11,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  project: default
+  project: platform
   source:
     repoURL: https://charts.jetstack.io
     chart: cert-manager

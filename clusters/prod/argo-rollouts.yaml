@@ -1,0 +1,52 @@
+# Wave -1. Progressive delivery: replaces Deployment with Rollout for workloads
+# that should not swap all replicas at once.
+#
+# This is the piece that makes deploys "buttonised" WITHOUT giving up selfHeal.
+# Promote / Abort / Retry act on an in-flight rollout rather than editing a
+# spec, so Argo CD has nothing to drift-correct and does not undo them. That
+# distinction is the whole reason this is worth installing:
+#
+#   Promote / Abort / Retry   -> work with selfHeal: true   (in-flight actions)
+#   Rollback to revision N    -> needs selfHeal: false       (spec change)
+#
+# For a permanent rollback the GitOps answer is still `git revert`, which
+# ADR-010 already commits to. Rollouts makes the bad version never reach all
+# users in the first place, which is the better half of the problem.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-rollouts
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: platform
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: 2.43.1
+    helm:
+      values: |
+        installCRDs: true
+
+        controller:
+          replicas: 1
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { memory: 512Mi }
+
+        # The Rollouts UI. Not exposed: reached over an SSH tunnel like Argo CD,
+        # since it can promote and abort production rollouts.
+        dashboard:
+          enabled: true
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 128Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo-rollouts
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

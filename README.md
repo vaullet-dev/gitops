@@ -63,14 +63,51 @@ node this is invisible. The moment a second node exists, a pod that reschedules
 elsewhere cannot reach its volume — that is the point to decide whether
 stateful services get node affinity or real replicated storage.
 
+## Project groups
+
+Applications are split across two Argo `AppProject`s rather than the built-in
+`default`, which permits any repo to deploy any kind into any namespace.
+
+| Project | Holds | May create cluster-scoped objects |
+|---|---|---|
+| `platform` | crds, cert-manager, local-path, traefik, argo-rollouts | yes — CRDs, ClusterIssuers, GatewayClass, StorageClass |
+| `services` | hello, and every `wallet-*` service to come | **no**, except `Namespace` |
+
+`services` is also restricted by source (`github.com/vaullet-dev/*`) and by
+destination namespace (`hello`, `wallet-*`), so a service cannot deploy into
+`kube-system` or `traefik` even by accident.
+
+`root` deliberately stays in `default`: it is applied by hand at bootstrap,
+before any AppProject exists, so it cannot depend on one.
+
+## Progressive delivery
+
+`hello` is a `Rollout`, not a `Deployment`. New versions go to 50% of replicas
+and then **stop**, waiting for a human to click Promote or Abort.
+
+The distinction that matters when combining this with GitOps:
+
+| Action | Works with `selfHeal: true`? | Why |
+|---|---|---|
+| Promote / Abort / Retry | **yes** | acts on an in-flight rollout, changes no spec |
+| Rollback to revision N | no | edits the spec; Argo drift-corrects it back within ~3 min |
+
+So the button-driven half of delivery works without weakening `selfHeal`.
+A *permanent* rollback is still `git revert`, which ADR-010 already commits to.
+If you want the Argo CD History-and-Rollback button live for an app, turn
+`selfHeal` off for that app specifically — and accept that the cluster can then
+drift from git without complaint.
+
 ## Sync waves
 
 Argo waits for each wave to go Healthy before starting the next.
 
 ```
+-3  projects      AppProjects -- must exist before any Application names one
 -2  crds          Gateway API CRDs (traefik-crds chart, standard channel)
 -1  cert-manager  with config.gatewayAPI.enabled -- see below
 -1  local-path-provisioner  the cluster's only StorageClass, and its default
+-1  argo-rollouts           progressive delivery + its dashboard
  0  traefik       GatewayClass + the shared Gateway "vaullet"
  1  cluster-issuers  letsencrypt-staging / -prod, http01 via gatewayHTTPRoute
  2  hello         the walking skeleton
@@ -140,6 +177,10 @@ Traefik dashboards are all closed at the firewall; reach them over SSH.
 # Argo CD
 ssh -L 8080:localhost:8080 root@<IP> \
   'KUBECONFIG=/etc/rancher/rke2/rke2.yaml kubectl -n argocd port-forward --address 0.0.0.0 svc/argocd-server 8080:443'
+
+# Argo Rollouts dashboard -- promote/abort production rollouts, so not exposed
+ssh -L 3100:localhost:3100 root@<IP> \
+  'KUBECONFIG=/etc/rancher/rke2/rke2.yaml kubectl -n argo-rollouts port-forward --address 0.0.0.0 svc/argo-rollouts-dashboard 3100:3100'
 
 # Traefik dashboard
 ssh -L 9000:localhost:9000 root@<IP> \

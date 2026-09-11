@@ -1,0 +1,67 @@
+# Wave -3. AppProjects are the "project groups" — they must exist before any
+# Application that names one, so they sort ahead of the CRDs.
+#
+# Everything previously lived in Argo's built-in `default` project, which
+# permits any repo to deploy any kind into any namespace. That is fine for one
+# hello app and wrong for fourteen services, so the split is drawn now while it
+# costs nothing: platform may touch the cluster, services may not.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: Cluster infrastructure — ingress, certs, storage, delivery
+  # An explicit allow-list. A compromised or mistyped repoURL cannot introduce
+  # a chart from somewhere nobody vetted.
+  sourceRepos:
+    - https://github.com/vaullet-dev/gitops.git
+    - https://github.com/rancher/local-path-provisioner.git
+    - https://traefik.github.io/charts
+    - https://charts.jetstack.io
+    - https://argoproj.github.io/argo-helm
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: '*'
+  # Platform installs CRDs, ClusterIssuers, GatewayClasses, StorageClasses.
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: services
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: Application workloads — the microservices and their routes
+  sourceRepos:
+    - https://github.com/vaullet-dev/*
+  # Namespace globs, so a new service does not need this file edited, but a
+  # service still cannot deploy into kube-system or traefik.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: hello
+    - server: https://kubernetes.default.svc
+      namespace: 'wallet-*'
+  # Namespace is the ONLY cluster-scoped kind a service may create, because
+  # CreateNamespace=true needs it. Without this the apps still work today (the
+  # namespaces already exist) and fail on a rebuild, which is the worst kind of
+  # latent break.
+  #
+  # Everything else is refused: no ClusterRole, no CRD, no ClusterIssuer, no
+  # mutating webhook. If a service chart needs one, that is a conversation
+  # rather than a merge.
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'

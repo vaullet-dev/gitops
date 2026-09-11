@@ -1,9 +1,31 @@
-apiVersion: apps/v1
-kind: Deployment
+# A Rollout, not a Deployment. Same pod spec; the controller changes how new
+# versions reach it.
+#
+# replicas is 2 rather than 1 on purpose: a 50% canary weight against a single
+# replica is meaningless, because one pod cannot be half-replaced. Two is the
+# smallest number that makes the step real. Each pod requests 10m CPU / 16Mi.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: hello
 spec:
-  replicas: 1
+  replicas: 2
+  # How many past versions the UI offers to roll back to.
+  revisionHistoryLimit: 5
+  strategy:
+    canary:
+      steps:
+        # Send half the traffic to the new version...
+        - setWeight: 50
+        # ...then stop and wait for a human. An empty pause has no duration,
+        # so the rollout sits here indefinitely until someone clicks Promote
+        # (or Abort). This is the button.
+        #
+        # Note: with no traffic-manager plugin, weight is approximated by
+        # replica count -- 50% means one of two pods. Real header/weight-based
+        # splitting on Gateway API needs the Gateway API plugin, which is worth
+        # adding only once there is traffic to split.
+        - pause: {}
   selector:
     matchLabels: { app: hello }
   template:

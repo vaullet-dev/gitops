@@ -14,7 +14,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  project: default
+  project: platform
   source:
     repoURL: https://github.com/rancher/local-path-provisioner.git
     targetRevision: v0.0.37
