@@ -20,10 +20,10 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
+  # ServerSideApply is NOT set app-wide. It is annotated on argocd-cm alone,
+  # which is the only resource here that shares ownership with the stock
+  # install. Setting it app-wide leaves every HTTPRoute permanently OutOfSync
+  # against CRD defaults -- and a status you learn to ignore is worse than none.
   syncPolicy:
     automated: { prune: true, selfHeal: true }
-    syncOptions:
-      # Load-bearing: argocd-cm is shared with the stock install, and only
-      # server-side apply keeps per-key field ownership so Argo's defaults
-      # survive. A client-side apply here would wipe them.
-      - ServerSideApply=true
+

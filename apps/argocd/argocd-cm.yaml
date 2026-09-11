@@ -18,6 +18,12 @@ metadata:
     app.kubernetes.io/name: argocd-cm
     app.kubernetes.io/part-of: argocd
   annotations:
+    # Scoped HERE rather than on the Application, because only this ConfigMap
+    # needs per-key field ownership. App-wide, server-side apply also makes
+    # Argo diff every other resource against live -- which means CRD schema
+    # defaults it never declared (kind: Service, weight: 1, the implicit
+    # matches block) show up as a permanent, meaningless OutOfSync.
+    argocd.argoproj.io/sync-options: ServerSideApply=true
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 data:
   # login  -> may sign in to the UI

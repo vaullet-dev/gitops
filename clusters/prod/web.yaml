@@ -1,19 +1,22 @@
+# Wave 2. The public site, sourced from its own repo rather than from here:
+# editing the page is one commit in vaullet-dev/web, and Argo redeploys it.
+# That keeps content changes out of the cluster's own repo.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: hello
+  name: web
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   project: services
   source:
-    repoURL: https://github.com/vaullet-dev/gitops.git
+    repoURL: https://github.com/vaullet-dev/web.git
     targetRevision: main
-    path: apps/hello
+    path: .
   destination:
     server: https://kubernetes.default.svc
-    namespace: hello
+    namespace: web
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions: [ CreateNamespace=true ]

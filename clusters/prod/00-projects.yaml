@@ -48,7 +48,7 @@ spec:
   # service still cannot deploy into kube-system or traefik.
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: hello
+      namespace: web
     - server: https://kubernetes.default.svc
       namespace: 'wallet-*'
   # Namespace is the ONLY cluster-scoped kind a service may create, because
