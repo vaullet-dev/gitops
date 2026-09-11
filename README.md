@@ -170,21 +170,32 @@ whose networks work best.
 
 ## Reaching things
 
-Nothing administrative is exposed. The Kubernetes API (6443) and the Argo CD and
-Traefik dashboards are all closed at the firewall; reach them over SSH.
+| What | Where | Auth |
+|---|---|---|
+| The app | `https://vaullet.dev`, `https://www.vaullet.dev` | none, it's a public page |
+| Argo CD | `https://argo.vaullet.dev` | Argo CD login |
+| Kubernetes API (6443) | closed at the firewall | SSH only |
+| Traefik dashboard | not exposed | SSH tunnel |
+| Argo Rollouts UI | **not deployed** | see TODO.md |
+
+Argo CD is the only administrative UI on the internet, and only because it
+actually authenticates. Anyone who logs in can change what the cluster runs, so
+the admin password matters and SSO is worth it as soon as more than one person
+needs access.
+
+The Argo Rollouts dashboard is **switched off**, not merely unexposed:
+CVE-2026-82277 (CVSS 9.8) means it serves `PromoteRollout`, `AbortRollout` and
+`SetRolloutImage` with no authentication at all. Promote and abort live in the
+Argo CD UI instead, via its built-in Rollout resource actions — same buttons,
+behind a login.
 
 ```sh
-# Argo CD
-ssh -L 8080:localhost:8080 root@<IP> \
-  'KUBECONFIG=/etc/rancher/rke2/rke2.yaml kubectl -n argocd port-forward --address 0.0.0.0 svc/argocd-server 8080:443'
-
-# Argo Rollouts dashboard -- promote/abort production rollouts, so not exposed
-ssh -L 3100:localhost:3100 root@<IP> \
-  'KUBECONFIG=/etc/rancher/rke2/rke2.yaml kubectl -n argo-rollouts port-forward --address 0.0.0.0 svc/argo-rollouts-dashboard 3100:3100'
-
 # Traefik dashboard
 ssh -L 9000:localhost:9000 root@<IP> \
-  'KUBECONFIG=/etc/rancher/rke2/rke2.yaml kubectl -n traefik port-forward --address 0.0.0.0 deploy/traefik 9000:8080'
+  'kubectl -n traefik port-forward --address 0.0.0.0 deploy/traefik 9000:8080'
+
+# Anything else: kubeconfig is at /root/.kube/config, so plain `kubectl` works
+ssh root@<IP> 'kubectl get pods -A'
 ```
 
 ## When a route does not route

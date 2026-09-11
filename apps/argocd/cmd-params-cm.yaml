@@ -1,0 +1,24 @@
+# Argo CD terminates no TLS of its own here.
+#
+# By default argocd-server serves HTTPS with a self-signed certificate. Behind
+# a gateway that already terminates a real Let's Encrypt certificate, that
+# means TLS twice, and Traefik would have to be told to trust a self-signed
+# upstream -- which on Gateway API needs a BackendTLSPolicy, and via Traefik
+# needs the ServersTransport CRD this cluster deliberately does not install.
+#
+# `server.insecure: "true"` makes argocd-server speak plain HTTP on :80. That
+# traffic never leaves the node -- Traefik to Pod, inside the cluster network --
+# while the public hop is properly encrypted at the Gateway.
+#
+# Changing this ConfigMap does NOT restart argocd-server. After the first sync:
+#   kubectl -n argocd rollout restart deploy/argocd-server
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cmd-params-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  server.insecure: "true"

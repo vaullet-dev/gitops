@@ -1,0 +1,24 @@
+# Wave 1: needs the Gateway from wave 0 to exist before its HTTPRoutes attach.
+#
+# Argo CD managing its own front door. The install itself still comes from
+# bootstrap/02-argocd.sh -- self-managing the whole installation is a sharper
+# knife than it looks, because a bad sync can leave you with no controller to
+# fix it. This manages only the two HTTPRoutes and one ConfigMap.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/vaullet-dev/gitops.git
+    targetRevision: main
+    path: apps/argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }

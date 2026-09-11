@@ -45,13 +45,14 @@ spec:
           annotations:
             # cert-manager's gateway-shim reads this, walks the listeners, and
             # creates one Certificate per distinct certificateRef secret name.
-            # Both HTTPS listeners below point at the SAME secret, so this is
-            # ONE cert with two SANs, not two certs.
+            # All three HTTPS listeners below point at the SAME secret, so this
+            # is ONE cert with three SANs, not three certs.
             #
-            # STAGING FIRST. Let's Encrypt production allows 5 duplicate certs
-            # per week; a broken HTTP-01 loop burns that in an afternoon and
-            # locks you out for days. Flip to letsencrypt-prod only after a
-            # staging cert has issued cleanly.
+            # Now on production. Let's Encrypt allows 5 DUPLICATE certs per week
+            # -- duplicate meaning the same SAN set, so adding a hostname is a
+            # new cert and does not count. Never flip back to staging to debug a
+            # problem: .dev is HSTS-preloaded and a staging cert makes every one
+            # of these hostnames unreachable in a browser, with no click-through.
             cert-manager.io/cluster-issuer: letsencrypt-prod
           listeners:
             # Port numbers here are the CONTAINER ports from the chart's `ports`
@@ -79,6 +80,23 @@ spec:
               port: 8443
               protocol: HTTPS
               hostname: www.vaullet.dev
+              mode: Terminate
+              namespacePolicy:
+                from: All
+              certificateRefs:
+                - name: vaullet-dev-tls
+            # Argo CD. Same secret as the other two listeners, so cert-manager
+            # issues ONE certificate with three SANs rather than a second cert.
+            # Adding a SAN makes this a new certificate, not a duplicate, so it
+            # does not count against the 5-duplicates-per-week limit.
+            #
+            # devops.vaullet.dev is intentionally NOT here: it is reserved for
+            # the Argo Rollouts UI, which cannot be exposed until it sits behind
+            # an authenticating proxy. See TODO.md.
+            argo:
+              port: 8443
+              protocol: HTTPS
+              hostname: argo.vaullet.dev
               mode: Terminate
               namespacePolicy:
                 from: All

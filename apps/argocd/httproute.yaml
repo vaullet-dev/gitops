@@ -1,0 +1,28 @@
+# argo.vaullet.dev -> Argo CD.
+#
+# This replaces the SSH tunnel. Argo CD is the one UI in this cluster that is
+# safe to expose, because it actually authenticates -- unlike the Argo Rollouts
+# dashboard (CVE-2026-82277, CVSS 9.8), which is why that stays switched off and
+# its promote/abort buttons live in here instead.
+#
+# It is still the keys to the cluster. Anyone who logs in can change what runs.
+# Treat the admin password accordingly, and prefer SSO once there is more than
+# one person.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: argocd
+spec:
+  parentRefs:
+    - name: vaullet
+      namespace: traefik
+      kind: Gateway
+      sectionName: argo
+  hostnames:
+    - argo.vaullet.dev
+  rules:
+    - backendRefs:
+        # Port 80 is the plain-HTTP port argocd-server exposes once
+        # server.insecure is set. Port 443 would be its self-signed TLS.
+        - name: argocd-server
+          port: 80

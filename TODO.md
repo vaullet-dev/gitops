@@ -94,6 +94,37 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       storage — Longhorn on a single node is theatre, so it only becomes a real
       option alongside the topology decision above.
 
+## Planned subdomains
+
+Decided 2026-09-11. `argo.vaullet.dev` ships now; `devops.vaullet.dev` is
+reserved and deliberately not wired up yet.
+
+| Host | Serves | Status |
+|---|---|---|
+| `vaullet.dev`, `www` | the app | live |
+| `argo.vaullet.dev` | Argo CD | ready to push |
+| `devops.vaullet.dev` | Argo Rollouts UI | **blocked — see below** |
+
+- [ ] **Put an authenticating proxy in front of the Rollouts UI before exposing
+      it.** The dashboard cannot go on a subdomain as it stands:
+      **CVE-2026-82277 (CVSS 9.8, 2026-08-28)** — through v1.10.0 it binds all
+      interfaces and serves `PromoteRollout`, `AbortRollout` and
+      `SetRolloutImage` with no authentication, no authorization and no CSRF
+      protection. `SetRolloutImage` means anyone who loads the page runs an
+      arbitrary container in this cluster. Upstream guidance is explicit: do not
+      expose it via a LoadBalancer Service or public Ingress.
+
+      Two ways forward, in order of preference:
+      1. **oauth2-proxy in front of it**, GitHub OAuth restricted to the
+         `vaullet-dev` org, with the HTTPRoute pointing at the proxy rather than
+         the dashboard. The dashboard Service stays ClusterIP.
+      2. **Wait for a fixed release** and re-check the CVE status first — but
+         still put auth in front, because even patched it has no user model.
+
+      Until then the promote/abort/retry buttons live in the Argo CD UI via its
+      built-in Rollout resource actions, which is the same functionality behind
+      real authentication.
+
 ## Architecture, not operations
 
 - [ ] **ADR-010's nightly CI matrix probably no longer fits.** The reasoning
