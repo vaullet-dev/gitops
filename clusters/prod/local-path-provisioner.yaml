@@ -1,0 +1,59 @@
+# Wave -1. RKE2 ships NO storage provisioner -- unlike k3s, which bundles this
+# exact component. Without it the cluster has zero StorageClasses, and every
+# PVC a stateful service creates sits Pending forever with no useful error.
+# That is a direct consequence of choosing RKE2 over k3s and it is the one cost
+# of that switch that is not obvious until the first database lands.
+#
+# The chart is not published to a Helm repository, so Argo renders it straight
+# from the tagged source tree.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-path-provisioner
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rancher/local-path-provisioner.git
+    targetRevision: v0.0.37
+    path: deploy/chart/local-path-provisioner
+    helm:
+      values: |
+        storageClass:
+          create: true
+          # The only StorageClass in the cluster, so it had better be the
+          # default -- otherwise every chart that omits storageClassName
+          # (most of them) produces a Pending PVC.
+          defaultClass: true
+          name: local-path
+          reclaimPolicy: Delete
+          # Keep the default: bind the PV only once a pod is scheduled, so the
+          # volume lands on the node that actually runs the workload. This is
+          # what makes the class survive adding nodes later.
+          volumeBindingMode: WaitForFirstConsumer
+
+        nodePathMap:
+          - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
+            paths:
+              # On / which is md2, a RAID1 mirror across both NVMe drives, so a
+              # single disk failure does not lose volume data.
+              - /opt/local-path-provisioner
+
+        # The chart defaults this to busybox:latest. An unpinned, mutable tag
+        # in a GitOps repo means the cluster can change underneath you with no
+        # commit to explain it.
+        helperImage:
+          repository: docker.io/library/busybox
+          tag: "1.38.0"
+
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits:   { memory: 128Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: local-path-storage
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ CreateNamespace=true ]

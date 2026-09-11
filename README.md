@@ -47,6 +47,22 @@ Gateway API implementation; routes are `HTTPRoute`, attached to one shared
 because its next act is to switch password auth off. **Open a second SSH session
 and confirm it works before closing the first one.**
 
+## Storage
+
+RKE2 ships **no storage provisioner** — unlike k3s, which bundles
+local-path-provisioner. A fresh RKE2 cluster has zero StorageClasses, and every
+PVC sits `Pending` forever with nothing useful in its events. `local-path` is
+installed explicitly in wave -1 and marked the cluster default.
+
+Volumes live at `/opt/local-path-provisioner`, on `/`, which is `md2` — a RAID1
+mirror across both NVMe drives, so a single disk failure does not lose data.
+
+**It is node-local.** `volumeBindingMode: WaitForFirstConsumer` means a PV is
+bound only once a pod is scheduled, and it is then pinned to that node. On one
+node this is invisible. The moment a second node exists, a pod that reschedules
+elsewhere cannot reach its volume — that is the point to decide whether
+stateful services get node affinity or real replicated storage.
+
 ## Sync waves
 
 Argo waits for each wave to go Healthy before starting the next.
@@ -54,6 +70,7 @@ Argo waits for each wave to go Healthy before starting the next.
 ```
 -2  crds          Gateway API CRDs (traefik-crds chart, standard channel)
 -1  cert-manager  with config.gatewayAPI.enabled -- see below
+-1  local-path-provisioner  the cluster's only StorageClass, and its default
  0  traefik       GatewayClass + the shared Gateway "vaullet"
  1  cluster-issuers  letsencrypt-staging / -prod, http01 via gatewayHTTPRoute
  2  hello         the walking skeleton
