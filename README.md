@@ -4,8 +4,26 @@ The whole cluster, as git. Three scripts run once on the box; everything after
 that is a commit here and Argo CD converges it.
 
 Target: one Hetzner AX41 (Ryzen 5 3600, 64 GB ECC, 2x512 GB NVMe), Ubuntu 26.04
-LTS, single-node k3s. **Production topology, not production grade** — one PSU,
+LTS, single-node RKE2. **Production topology, not production grade** — one PSU,
 one board, one node. That is deliberate and it is stated rather than hidden.
+
+## Why RKE2, not k3s
+
+etcd is the datastore with no flag to forget, the control plane runs as static
+pods, and SUSE positions RKE2 for production datacenter use where k3s is aimed
+at edge, IoT and CI. A single-server k3s defaults to **SQLite** — fine for a
+demo, hard to defend as the control plane of a ledger, and with no path to HA
+without rebuilding.
+
+On one box neither distribution gives high availability: same kernel, same disk
+array, same PSU. The difference RKE2 buys here is durability of cluster state,
+hardened defaults, and the option of `profile: "cis"` once the stack is up.
+
+`profile: "cis"` is deliberately **not** enabled at bootstrap. It enforces
+restricted PodSecurity cluster-wide and default-deny NetworkPolicies, which
+breaks Traefik, cert-manager and Argo on day one. The prerequisites (the `etcd`
+system user) are done by `01-rke2.sh`; enabling it is four lines, printed at the
+end of that script.
 
 ## Routing: Gateway API only
 
@@ -21,7 +39,7 @@ Gateway API implementation; routes are `HTTPRoute`, attached to one shared
 |---|---|---|
 | `bootstrap/00-host.sh` | ufw, fail2ban, keys-only SSH, unattended security updates | yes |
 | DNS | `A` record for `vaullet.dev` and `www` at the AX41's IPv4 | — |
-| `bootstrap/01-k3s.sh` | k3s v1.36.4+k3s1, Traefik disabled, servicelb kept | yes |
+| `bootstrap/01-rke2.sh` | RKE2 v1.36.4+rke2r1, bundled ingress disabled, servicelb enabled | yes |
 | `bootstrap/02-argocd.sh` | Argo CD v3.5.2 + the root app | yes |
 | everything else | commits to this repo | — |
 
@@ -91,24 +109,24 @@ challenge over port 80 is unaffected.
 
 ## IPv4 only
 
-k3s here is single-stack IPv4. Publish an **`A` record only**. If you also
+The cluster here is single-stack IPv4. Publish an **`A` record only**. If you also
 publish `AAAA`, browsers that prefer IPv6 will reach the AX41's v6 address,
 find nothing listening, and the site will look broken for exactly the users
 whose networks work best.
 
 ## Reaching things
 
-Nothing administrative is exposed. The k3s API (6443) and the Argo CD and
+Nothing administrative is exposed. The Kubernetes API (6443) and the Argo CD and
 Traefik dashboards are all closed at the firewall; reach them over SSH.
 
 ```sh
 # Argo CD
 ssh -L 8080:localhost:8080 root@<IP> \
-  'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n argocd port-forward --address 0.0.0.0 svc/argocd-server 8080:443'
+  'KUBECONFIG=/etc/rancher/rke2/rke2.yaml kubectl -n argocd port-forward --address 0.0.0.0 svc/argocd-server 8080:443'
 
 # Traefik dashboard
 ssh -L 9000:localhost:9000 root@<IP> \
-  'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n traefik port-forward --address 0.0.0.0 deploy/traefik 9000:8080'
+  'KUBECONFIG=/etc/rancher/rke2/rke2.yaml kubectl -n traefik port-forward --address 0.0.0.0 deploy/traefik 9000:8080'
 ```
 
 ## When a route does not route

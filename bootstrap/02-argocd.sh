@@ -2,7 +2,7 @@
 # Argo CD, then hand the cluster over to git. This is the LAST imperative step:
 # everything after it is a commit to gitops.
 set -euo pipefail
-export KUBECONFIG=${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}
+export KUBECONFIG=${KUBECONFIG:-/etc/rancher/rke2/rke2.yaml}
 
 ARGO_VERSION="${ARGO_VERSION:-v3.5.2}"
 
@@ -24,5 +24,5 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 echo
 echo "The UI is not exposed. Reach it from your workstation with:"
 echo "  ssh -L 8080:localhost:8080 root@\${PUBLIC_IP} \\"
-echo "    'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n argocd port-forward --address 0.0.0.0 svc/argocd-server 8080:443'"
+echo "    'KUBECONFIG=/etc/rancher/rke2/rke2.yaml kubectl -n argocd port-forward --address 0.0.0.0 svc/argocd-server 8080:443'"
 echo "then open https://localhost:8080 (self-signed cert warning is expected)."

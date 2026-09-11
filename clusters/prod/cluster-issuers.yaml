@@ -10,6 +10,13 @@ metadata:
   name: letsencrypt-staging
   annotations:
     argocd.argoproj.io/sync-wave: "1"
+    # Without this, NOTHING in the root app syncs. Argo validates every
+    # resource it owns before applying any of them, and cert-manager.io/v1 does
+    # not exist until the cert-manager app (wave -1) has run -- so the dry-run
+    # fails and takes the whole sync with it, waves or no waves. This tells
+    # Argo to skip the dry-run while the CRD is absent; by the time wave 1 is
+    # actually applied, wave -1 is Healthy and the CRD is there.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   acme:
     server: https://acme-staging-v02.api.letsencrypt.org/directory
@@ -30,6 +37,13 @@ metadata:
   name: letsencrypt-prod
   annotations:
     argocd.argoproj.io/sync-wave: "1"
+    # Without this, NOTHING in the root app syncs. Argo validates every
+    # resource it owns before applying any of them, and cert-manager.io/v1 does
+    # not exist until the cert-manager app (wave -1) has run -- so the dry-run
+    # fails and takes the whole sync with it, waves or no waves. This tells
+    # Argo to skip the dry-run while the CRD is absent; by the time wave 1 is
+    # actually applied, wave -1 is Healthy and the CRD is there.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
