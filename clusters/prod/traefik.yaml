@@ -52,7 +52,7 @@ spec:
             # per week; a broken HTTP-01 loop burns that in an afternoon and
             # locks you out for days. Flip to letsencrypt-prod only after a
             # staging cert has issued cleanly.
-            cert-manager.io/cluster-issuer: letsencrypt-staging
+            cert-manager.io/cluster-issuer: letsencrypt-prod
           listeners:
             # Port numbers here are the CONTAINER ports from the chart's `ports`
             # section (web 8000 -> Service 80, websecure 8443 -> Service 443).
