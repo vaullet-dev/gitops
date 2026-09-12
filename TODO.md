@@ -58,6 +58,23 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
 
 ## Known rough edges
 
+- [ ] **The request split is manifest-correct but has never actually run.** The
+      `web` Rollout now weights `web-stable` / `web-canary` on the HTTPRoute
+      through the Gateway API plugin. Two things are unproven on this cluster:
+      that the plugin loads at all, and that Traefik honours `weight: 0` on a
+      backendRef the way Gateway API specifies (no traffic; an all-zero rule is a
+      503). Check on the first canary, while it sits at the pause:
+      ```sh
+      kubectl -n argo-rollouts logs deploy/argo-rollouts | grep -i gatewayapi
+      kubectl -n web get httproute web \
+        -o jsonpath='{.spec.rules[0].backendRefs[*].weight}{"\n"}'   # expect 50 50
+      # then, with this streaming, curl the site ~20 times and watch the split
+      kubectl -n web logs -l app=web --prefix --tail=0 -f
+      ```
+      If the weights never change, the plugin is missing and the canary silently
+      degraded to a pod-count split — the failure mode to recognise, because
+      everything else still reports Healthy.
+
 - [ ] **`hello-nginx-conf` is not hash-suffixed.** It is a plain ConfigMap
       inside `apps/hello/deployment.yaml`, not part of the
       `configMapGenerator`, so editing the nginx config will *not* roll the

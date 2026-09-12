@@ -71,10 +71,10 @@ Applications are split across two Argo `AppProject`s rather than the built-in
 | Project | Holds | May create cluster-scoped objects |
 |---|---|---|
 | `platform` | crds, cert-manager, local-path, traefik, argo-rollouts | yes — CRDs, ClusterIssuers, GatewayClass, StorageClass |
-| `services` | hello, and every `wallet-*` service to come | **no**, except `Namespace` |
+| `services` | web, and every `wallet-*` service to come | **no**, except `Namespace` |
 
 `services` is also restricted by source (`github.com/vaullet-dev/*`) and by
-destination namespace (`hello`, `wallet-*`), so a service cannot deploy into
+destination namespace (`web`, `wallet-*`), so a service cannot deploy into
 `kube-system` or `traefik` even by accident.
 
 `root` deliberately stays in `default`: it is applied by hand at bootstrap,
@@ -82,8 +82,28 @@ before any AppProject exists, so it cannot depend on one.
 
 ## Progressive delivery
 
-`hello` is a `Rollout`, not a `Deployment`. New versions go to 50% of replicas
-and then **stop**, waiting for a human to click Promote or Abort.
+`web` is a `Rollout`, not a `Deployment`. A new image gets **50% of the requests**
+and then **stops**, waiting for a human to click Promote or Abort.
+
+Requests, not replicas. The weight is applied by Traefik: the `web` HTTPRoute has
+two weighted backends (`web-stable`, `web-canary`) and Argo Rollouts' Gateway API
+plugin rewrites those weights as the rollout advances. Without that plugin a
+`setWeight: 50` step means nothing more than "one of the two pods", and which one
+a visitor lands on is kube-proxy's choice, per connection.
+
+The plugin is a separate process, not part of the controller binary, and is
+delivered by an init container in `clusters/prod/argo-rollouts.yaml` rather than
+downloaded from GitHub at every controller start. It needs no extra RBAC: the
+chart's `providerRBAC.providers.gatewayAPI` already grants the controller
+`update` on `httproutes`, which is the only verb the plugin uses.
+
+**The live HTTPRoute is meant to differ from git while a canary runs.** The `web`
+Application therefore ignores `.spec.rules[].backendRefs[].weight` and the
+plugin's `rollouts.argoproj.io/gatewayapi-canary` label, and syncs with
+`RespectIgnoreDifferences=true`. Without the first, `selfHeal` would reset the
+weights within seconds and quietly end the canary while the Rollout still
+reported *paused*; without the second, any sync during the pause — a click, or
+the next image-tag commit — would do the same thing.
 
 The distinction that matters when combining this with GitOps:
 
@@ -107,10 +127,10 @@ Argo waits for each wave to go Healthy before starting the next.
 -2  crds          Gateway API CRDs (traefik-crds chart, standard channel)
 -1  cert-manager  with config.gatewayAPI.enabled -- see below
 -1  local-path-provisioner  the cluster's only StorageClass, and its default
--1  argo-rollouts           progressive delivery + its dashboard
+-1  argo-rollouts           progressive delivery (dashboard off: CVE-2026-82277)
  0  traefik       GatewayClass + the shared Gateway "vaullet"
  1  cluster-issuers  letsencrypt-staging / -prod, http01 via gatewayHTTPRoute
- 2  hello         the walking skeleton
+ 2  web           the public site, from the vaullet-dev/web repo
 ```
 
 The wave -1/0 order matters and is not cosmetic. cert-manager's gateway-shim

@@ -65,7 +65,7 @@ spec:
               port: 8000
               protocol: HTTP
               # The ACME HTTP-01 solver plants a temporary HTTPRoute; it lives
-              # in the Gateway's namespace, but hello lives in `hello`, so this
+              # in the Gateway's namespace, but the site lives in `web`, so this
               # has to be All rather than the default Same.
               namespacePolicy:
                 from: All

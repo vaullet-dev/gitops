@@ -19,6 +19,25 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: web
+  # During a canary the Gateway API plugin rewrites the HTTPRoute in place, so
+  # the live object legitimately differs from git. Without these two entries
+  # selfHeal would see drift and reset the weights to 100/0 within seconds --
+  # aborting the canary by accident, with the rollout still reporting "paused".
+  ignoreDifferences:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: web
+      jqPathExpressions:
+        - .spec.rules[].backendRefs[].weight
+        # The plugin also labels the route while a canary is in flight, and
+        # removes the label when the weight returns to 0.
+        - .metadata.labels."rollouts.argoproj.io/gatewayapi-canary"
   syncPolicy:
     automated: { prune: true, selfHeal: true }
-    syncOptions: [ CreateNamespace=true ]
+    syncOptions:
+      - CreateNamespace=true
+      # ignoreDifferences alone only silences the DIFF. A sync triggered while a
+      # canary is paused -- someone clicking Sync, or the next tag commit -- would
+      # still apply the committed weights. This makes the sync leave the ignored
+      # fields as they are.
+      - RespectIgnoreDifferences=true

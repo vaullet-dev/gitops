@@ -37,6 +37,53 @@ spec:
             requests: { cpu: 50m, memory: 128Mi }
             limits:   { memory: 512Mi }
 
+          # Traffic routing for Gateway API lives OUTSIDE the controller binary,
+          # as a plugin process the controller launches over RPC. Without it a
+          # Rollout's `setWeight` can only mean "this fraction of the pods";
+          # with it, Traefik weights the HTTPRoute backends per request.
+          #
+          # Delivered by an init container rather than the documented
+          # `location: https://github.com/.../releases/download/...`, which the
+          # controller fetches on EVERY start: a GitHub blip or an egress rule
+          # then leaves the controller with no traffic router, and Rollouts hang
+          # at their first weight step. An image is pulled by kubelet, cached on
+          # the node, retried on failure, and pinned by digest -- the same
+          # property the web repo insists on for its own images.
+          initContainers:
+            - name: gatewayapi-plugin
+              # v0.17.0, multi-arch index digest. The tag is decoration; the
+              # digest is the version.
+              image: ghcr.io/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi:v0.17.0@sha256:bc40d5edf13307e455f6c18cbf9cc79715165cbee8b05a674fd88119f119d4a2
+              command: [ /bin/sh, -c ]
+              args: [ cp /bin/rollouts-plugin-trafficrouter-gatewayapi /plugins/ ]
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits:   { memory: 64Mi }
+              securityContext:
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true   # /plugins is the emptyDir below
+                capabilities: { drop: [ ALL ] }
+              volumeMounts:
+                - { name: plugins, mountPath: /plugins }
+          volumes:
+            - { name: plugins, emptyDir: {} }
+          volumeMounts:
+            - { name: plugins, mountPath: /plugins }
+
+          # Renders into the argo-rollouts-config ConfigMap. The chart stamps a
+          # checksum of that ConfigMap onto the controller pod, so changing this
+          # rolls the controller by itself -- no `kubectl rollout restart`.
+          #
+          # `name` must match the key used under trafficRouting.plugins in every
+          # Rollout that wants it. No extra RBAC is needed: the chart's
+          # providerRBAC.providers.gatewayAPI (on by default) already grants
+          # get/list/watch/update on httproutes, and the plugin only ever calls
+          # Update.
+          trafficRouterPlugins:
+            - name: argoproj-labs/gatewayAPI
+              location: file:///plugins/rollouts-plugin-trafficrouter-gatewayapi
+
         # DISABLED, and not a matter of preference.
         #
         # CVE-2026-82277 (CVSS 9.8, 2026-08-28): the Rollouts dashboard through
