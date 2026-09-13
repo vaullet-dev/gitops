@@ -1,0 +1,119 @@
+# Wave 0. OpenBao, the credential store. Needs cert-manager (wave -1) for its
+# TLS certificate and local-path (wave -1) for its volume.
+#
+# OpenBao rather than HashiCorp Vault: same API and CLI, but MPL-2.0 under the
+# Linux Foundation. Vault moved to the BSL in 2023, and Vaullet ships inside
+# customer clusters -- OpenBao keeps the licence out of every contract.
+#
+# Argo installs it. Argo cannot initialise or unseal it, by design: that needs
+# the unseal keys, which live with a human and nowhere in this cluster. After
+# the first sync, and after EVERY restart of openbao-0, run
+# bootstrap/03-openbao.sh. Until then the pod is Running but not Ready, and
+# this app shows Progressing. That is the seal working.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://openbao.github.io/openbao-helm
+      chart: openbao
+      targetRevision: 0.29.4     # OpenBao v2.6.2
+      helm:
+        values: |
+          global:
+            tlsDisable: false
+
+          # ESO delivers secrets. No sidecar injector, no CSI driver.
+          injector:
+            enabled: false
+
+          server:
+            # Raft storage, one replica. Raft rather than the "file" backend
+            # because `bao operator raft snapshot` only exists for raft, and a
+            # second and third replica later is a replica count, not a migration.
+            standalone:
+              enabled: false
+            ha:
+              enabled: true
+              replicas: 1
+              # One replica makes the chart's PDB maxUnavailable: 0, which
+              # blocks every node drain forever. Off until there are three.
+              disruptionBudget:
+                enabled: false
+              raft:
+                enabled: true
+                setNodeId: true
+                config: |
+                  ui = true
+
+                  # 0.0.0.0, not the chart's [::]: this cluster is IPv4-only.
+                  listener "tcp" {
+                    address         = "0.0.0.0:8200"
+                    cluster_address = "0.0.0.0:8201"
+                    tls_cert_file   = "/openbao/tls/tls.crt"
+                    tls_key_file    = "/openbao/tls/tls.key"
+                  }
+
+                  storage "raft" {
+                    path = "/openbao/data"
+                  }
+
+                  service_registration "kubernetes" {}
+
+                  # Every request and response, HMAC'd, to the container log.
+                  # Declared here rather than with `bao audit enable`: since
+                  # 2.3.2 the API route is off unless explicitly unsafe-enabled,
+                  # because it can write files anywhere. stdout rather than a
+                  # file on a PVC: kubelet rotates it, and a full audit volume
+                  # makes OpenBao refuse every request.
+                  audit "file" "stdout" {
+                    options {
+                      file_path = "stdout"
+                    }
+                  }
+
+            # The CLI inside the pod talks to https://127.0.0.1:8200, which is
+            # in the certificate's SANs. This makes it verify rather than skip.
+            extraEnvironmentVars:
+              BAO_CACERT: /openbao/tls/ca.crt
+
+            volumes:
+              - name: tls
+                secret:
+                  secretName: openbao-tls
+            volumeMounts:
+              - name: tls
+                mountPath: /openbao/tls
+                readOnly: true
+
+            dataStorage:
+              size: 5Gi
+              storageClass: local-path
+
+            resources:
+              requests: { cpu: 50m, memory: 128Mi }
+              limits:   { memory: 512Mi }
+
+          # The UI is served on 8200 by the server itself. No extra Service,
+          # no HTTPRoute: reach it over an SSH tunnel.
+          ui:
+            enabled: false
+
+    # The internal CA and the server certificate. Synced in-app wave -1, so the
+    # Secret exists before the StatefulSet mounts it.
+    - repoURL: https://github.com/vaullet-dev/gitops.git
+      targetRevision: main
+      path: apps/openbao
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openbao
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ CreateNamespace=true ]

@@ -22,6 +22,8 @@ spec:
     - https://traefik.github.io/charts
     - https://charts.jetstack.io
     - https://argoproj.github.io/argo-helm
+    - https://charts.external-secrets.io
+    - https://openbao.github.io/openbao-helm
   destinations:
     - server: https://kubernetes.default.svc
       namespace: '*'

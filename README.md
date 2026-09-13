@@ -42,6 +42,7 @@ Gateway API implementation; routes are `HTTPRoute`, attached to one shared
 | `bootstrap/01-rke2.sh` | RKE2 v1.36.4+rke2r1, bundled ingress disabled, servicelb enabled | yes |
 | `bootstrap/02-argocd.sh` | Argo CD v3.5.2 + the root app | yes |
 | everything else | commits to this repo | — |
+| `bootstrap/03-openbao.sh` | after Argo has synced OpenBao: `init` once, `unseal`, `configure` | all but `init` |
 
 `00-host.sh` refuses to run if `/root/.ssh/authorized_keys` has no key in it,
 because its next act is to switch password auth off. **Open a second SSH session
@@ -87,9 +88,13 @@ and then **stops**, waiting for a human to click Promote or Abort.
 
 Requests, not replicas. The weight is applied by Traefik: the `web` HTTPRoute has
 two weighted backends (`web-stable`, `web-canary`) and Argo Rollouts' Gateway API
-plugin rewrites those weights as the rollout advances. Without that plugin a
-`setWeight: 50` step means nothing more than "one of the two pods", and which one
-a visitor lands on is kube-proxy's choice, per connection.
+plugin rewrites those weights as the rollout advances.
+
+That is what lets `web` run at **`replicas: 1`** and still canary properly. One
+pod at rest; at the pause the controller rounds the canary up to a single pod, so
+there are two — one per version — and Traefik splits requests between them.
+Without the plugin the split would follow pod arithmetic, and at one replica a
+weight has nothing to divide: kube-proxy would pick per connection.
 
 The plugin is a separate process, not part of the controller binary, and is
 delivered by an init container in `clusters/prod/argo-rollouts.yaml` rather than
@@ -128,7 +133,9 @@ Argo waits for each wave to go Healthy before starting the next.
 -1  cert-manager  with config.gatewayAPI.enabled -- see below
 -1  local-path-provisioner  the cluster's only StorageClass, and its default
 -1  argo-rollouts           progressive delivery (dashboard off: CVE-2026-82277)
+-1  external-secrets        copies OpenBao values into Kubernetes Secrets
  0  traefik       GatewayClass + the shared Gateway "vaullet"
+ 0  openbao       credential store; sealed until bootstrap/03-openbao.sh
  1  cluster-issuers  letsencrypt-staging / -prod, http01 via gatewayHTTPRoute
  2  web           the public site, from the vaullet-dev/web repo
 ```
@@ -138,6 +145,78 @@ reacts to the `cert-manager.io/cluster-issuer` annotation on the Gateway that
 Traefik creates in wave 0. A cert-manager that came up *without*
 `config.gatewayAPI.enabled` ignores that annotation **silently** — no event, no
 error, no Certificate, nothing in the logs to tell you why.
+
+## Secrets
+
+OpenBao holds every credential. External Secrets Operator (ESO) copies them into
+ordinary Kubernetes Secrets, so a service reads environment variables and has no
+OpenBao client. Nothing secret is committed here, not even encrypted.
+
+**The seal.** OpenBao starts sealed and stays sealed until two of its three
+unseal keys are entered. There is no cloud KMS on Hetzner to do that
+automatically, so after every restart of `openbao-0` (reboot, upgrade, eviction):
+
+```sh
+bootstrap/03-openbao.sh unseal
+```
+
+Until then `openbao-0` is Running but not Ready. Running services are not
+affected: the Secrets ESO already wrote stay in place, and pods restart with
+them. Only a *changed* secret waits for the unseal.
+
+Upgrades need the same: the chart's StatefulSet uses `updateStrategy: OnDelete`,
+so a new OpenBao version lands only when you delete the pod, and then you unseal.
+
+**The boundary.** Each service namespace reads `kv/<namespace>/*` and nothing
+else. Onboarding a service is three things:
+
+1. `bootstrap/03-openbao.sh onboard wallet-ledger` creates the OpenBao policy
+   and role, both named after the namespace.
+2. The service's own repo ships a ServiceAccount named `secrets-reader` and its
+   `ExternalSecret`s.
+3. This repo gets a ClusterSecretStore that only that namespace may use:
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: openbao-wallet-ledger
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  conditions:
+    - namespaces: [ wallet-ledger ]
+  provider:
+    vault:                                   # OpenBao speaks the Vault API
+      server: https://openbao.openbao.svc:8200
+      path: kv
+      version: v2
+      caProvider:
+        type: Secret
+        namespace: openbao
+        name: openbao-tls
+        key: ca.crt
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: wallet-ledger
+          serviceAccountRef:
+            name: secrets-reader
+            namespace: wallet-ledger
+```
+
+The store is cluster-scoped, and the `services` project cannot create
+cluster-scoped objects. That is on purpose: a service cannot point itself at
+another service's secrets. The same service's database and roles will live
+here too.
+
+**TLS.** OpenBao serves a certificate from a private CA in its own namespace
+(`apps/openbao/tls.yaml`). Clients trust `ca.crt` from the `openbao-tls` Secret.
+
+**Audit.** Every request goes to `openbao-0`'s stdout, declared in the server
+config. `kubectl -n openbao logs openbao-0` is the audit trail until logs are
+shipped somewhere durable.
 
 ## The certificate
 
@@ -196,6 +275,7 @@ whose networks work best.
 | Argo CD | `https://argo.vaullet.dev` | Argo CD login |
 | Kubernetes API (6443) | closed at the firewall | SSH only |
 | Traefik dashboard | not exposed | SSH tunnel |
+| OpenBao UI and API | not exposed | SSH tunnel, then an OpenBao token |
 | Argo Rollouts UI | **not deployed** | see TODO.md |
 
 Argo CD is the only administrative UI on the internet, and only because it
@@ -213,6 +293,11 @@ behind a login.
 # Traefik dashboard
 ssh -L 9000:localhost:9000 root@<IP> \
   'kubectl -n traefik port-forward --address 0.0.0.0 deploy/traefik 9000:8080'
+
+# OpenBao UI at https://localhost:8200/ui. Expect a certificate warning: the
+# cert is from the private CA. localhost is not HSTS-preloaded, so you can click through.
+ssh -L 8200:localhost:8200 root@<IP> \
+  'kubectl -n openbao port-forward svc/openbao 8200:8200'
 
 # Anything else: kubeconfig is at /root/.kube/config, so plain `kubectl` works
 ssh root@<IP> 'kubectl get pods -A'

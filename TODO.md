@@ -34,6 +34,34 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       pre-move copies of every manifest in this repo. Two sources of truth for
       the same files is how a fix gets applied to the wrong one.
 
+## OpenBao
+
+- [ ] **First bring-up.** After Argo syncs `openbao`, in your own SSH session:
+      `bootstrap/03-openbao.sh init`, store the three key shares in three
+      different places, then `unseal` and `configure`. Then prove the seal once:
+      delete `openbao-0`, confirm it comes back sealed, and unseal it again
+      with two of the shares.
+
+- [ ] **Back it up off the box.** Losing OpenBao's volume loses every
+      credential. The chart ships a snapshot CronJob (`snapshotAgent`), but it
+      needs an S3 target, and Hetzner Object Storage is a new paid service.
+      Decide on it before the first real credential is stored. An etcd snapshot
+      is not a substitute: it holds the Secrets ESO copied, not OpenBao.
+
+- [ ] **Certificate renewal, around August 2027.** cert-manager renews
+      `openbao-tls` 30 days before expiry, but OpenBao only reads the cert at
+      start and on SIGHUP. After the renewal:
+      ```sh
+      kubectl -n openbao exec openbao-0 -- kill -HUP 1   # dumb-init passes it on
+      ```
+      Or automate it before then. The failure mode is every ESO sync failing
+      on an expired cert while OpenBao itself looks healthy.
+
+- [ ] **Stop using the root token.** `configure` and `onboard` take it today.
+      Once there is an admin identity (userpass or GitHub OIDC with a
+      narrow policy), revoke the root token and use
+      `bao operator generate-root` with the key shares for emergencies only.
+
 ## Once the stack is verified
 
 - [ ] **Enable the RKE2 CIS profile.** Deliberately off at bootstrap because it
@@ -57,6 +85,16 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       drill once and write down how long it took.
 
 ## Known rough edges
+
+- [ ] **Sync waves do not wait for child apps to be Healthy.** The README says
+      they do. Argo CD removed health assessment of `Application` resources in
+      1.8, so `root` applies wave 0 as soon as the wave -1 Application objects
+      *exist*, not when cert-manager is running. The cert-manager-before-Traefik
+      ordering has held by timing, not by guarantee. The fix is the documented
+      `resource.customizations.health.argoproj.io_Application` key in
+      `argocd-cm`. When adding it, remember that a sealed `openbao` then reports
+      Progressing and **holds every later wave** until someone unseals it. That
+      is right for services that need secrets, but not for `web`.
 
 - [ ] **The request split is manifest-correct but has never actually run.** The
       `web` Rollout now weights `web-stable` / `web-canary` on the HTTPRoute

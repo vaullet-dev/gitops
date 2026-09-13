@@ -1,0 +1,81 @@
+# TLS for OpenBao, from a private CA that exists only for this.
+#
+# Secrets cross the pod network between ESO and OpenBao. On one node that
+# traffic never leaves the box, which is the argument used for argocd-server
+# running plain HTTP -- but these are the credentials themselves, and the
+# three-VM topology in TODO.md would put them on a wire. cert-manager is already
+# here, so it costs four objects.
+#
+# Namespaced Issuers, not ClusterIssuers: nothing outside this namespace should
+# be able to mint a certificate this CA signs.
+#
+#   selfsigned (Issuer) -> openbao-ca (Certificate, isCA) -> openbao-ca (Issuer)
+#                       -> openbao-tls (Certificate, what the server presents)
+#
+# RENEWAL: cert-manager rewrites openbao-tls 30 days before expiry, but OpenBao
+# reads the file at start and on SIGHUP only. See TODO.md.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openbao-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  isCA: true
+  commonName: openbao-internal-ca
+  secretName: openbao-ca
+  duration: 87600h        # 10 years; rotating the CA means rotating every client's trust
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: Issuer
+    name: selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: openbao-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  ca:
+    secretName: openbao-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openbao-tls
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  secretName: openbao-tls   # tls.crt, tls.key, and ca.crt for clients to trust
+  duration: 8760h           # 1 year
+  renewBefore: 720h         # 30 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages: [ server auth ]
+  dnsNames:
+    - openbao
+    - openbao.openbao.svc
+    - openbao.openbao.svc.cluster.local
+    - openbao-active.openbao.svc
+    - openbao-internal
+    - "*.openbao-internal"
+    - "*.openbao-internal.openbao.svc"
+  ipAddresses:
+    - 127.0.0.1             # the CLI inside the pod, and the readiness probe
+  issuerRef:
+    kind: Issuer
+    name: openbao-ca
