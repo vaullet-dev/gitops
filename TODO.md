@@ -88,21 +88,37 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       quorum; the commands are in `RUNBOOK-cluster-split-commands.md` §8. vCPU
       pinning belongs in the same pass — CPU steal causing spurious etcd leader
       elections is the classic virtualised-etcd failure.
+      **Unblocked 2026-09-17:** this was unsafe while ingress DNAT named `k8s-1`,
+      because resizing that node took the site down. HAProxy health-checks all
+      three now, so the rolling restart is survivable.
 
-- [ ] **Split-horizon DNS for `vaullet.dev` and `argo.vaullet.dev`.** The DNAT
-      target node cannot reach the public address through the host: the packet is
-      DNAT-ed to itself, never SNAT-ed, and arrives with `src == dst`, where the
-      kernel drops it as a martian. The other two nodes hairpin correctly.
-      Nothing is broken today only because cert-manager runs elsewhere — and
-      cert-manager's HTTP-01 self-check is exactly the call that breaks. Point
-      the hostnames at the in-cluster Traefik Service and the hairpin disappears
-      for all three nodes.
+- [x] ~~**HAProxy on the host, replacing the single-target DNAT.**~~ Done
+      2026-09-17, `bootstrap/05-haproxy.sh`. TCP passthrough, `mode tcp`, HTTP
+      health checks on :80 for both pools — a bare TCP connect succeeds against
+      klipper-lb even with no Traefik behind it. Drill passed: the site served
+      with two of three backends in MAINT. The DNAT, the `LIBVIRT_FWI` accept and
+      the hairpin MASQUERADE were all removed afterwards; rollback is
+      `systemctl enable --now vaullet-ingress.service`, which re-creates all
+      three. Note for anyone tempted by a shortcut: `-m statistic --mode nth`
+      across the three addresses is *not* equivalent — with no health checking it
+      black-holes a third of requests the moment a node fails.
 
-- [ ] **HAProxy on the host, replacing the single-target DNAT.** Ingress names
-      one node; that node going down takes the site with it, regardless of where
-      Traefik is scheduled. Do not substitute `-m statistic --mode nth` across
-      the three addresses: with no health checks it black-holes a third of
-      requests the moment a node fails, which is worse than one honest SPOF.
+- [x] ~~**Split-horizon DNS for the public hostnames.**~~ Moot as of 2026-09-17.
+      The hairpin existed because DNAT preserves the source address, so the
+      targeted node received a packet with `src == dst` and dropped it as a
+      martian. HAProxy terminates the connection and opens a new one from the
+      host, so source and destination are never equal. Verified: all three nodes
+      now reach the public address (`HTTP 301`), where `k8s-1` returned `000`.
+      Split-horizon DNS would still save a host round-trip for in-cluster calls;
+      it is an optimisation now, not a fix.
+
+- [ ] **PROXY protocol, once anything needs the client's address.** `mode tcp`
+      means Traefik sees the host (`192.168.122.1`), not the caller. Nothing
+      depends on it today — there are no middlewares and access logs are off —
+      but rate limiting, IP allowlists and honest access logs all do. The fix is
+      `send-proxy-v2` on the HAProxy servers plus `proxyProtocol.trustedIPs` on
+      the Traefik entrypoints, and it must land on both sides together or
+      requests break.
 
 ## Once the stack is verified
 

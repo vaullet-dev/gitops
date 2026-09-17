@@ -499,18 +499,28 @@ virsh vcpupin k8s-1 0 0 --config ; virsh vcpupin k8s-1 1 1 --config   # …and s
 
 ## After
 
-- **HAProxy on the host**, TCP passthrough to all three nodes, replacing the single-target DNAT.
-  Until then, `k8s-1` going down takes ingress with it — not because Traefik lives there, but
-  because the DNAT names it. Do not reach for `-m statistic --mode nth` across the three addresses
-  instead: with no health checking it black-holes a third of requests the moment a node goes down,
-  which is worse than one honest point of failure.
-- **Split-horizon DNS for the public hostnames.** The DNAT target cannot reach the public address
-  through the host: the packet is DNAT-ed to itself, never gets SNAT-ed, and arrives with
-  `src == dst`, where the kernel drops it as a martian. The other two nodes hairpin fine. Nothing
-  is broken today because cert-manager happens to run elsewhere, but a pod scheduled onto the
-  target node that calls the site by name will fail, and cert-manager's HTTP-01 self-check is
-  exactly such a call. Resolving the hostnames to the in-cluster Traefik Service removes the
-  hairpin for all three nodes and drops a host round-trip.
+- ~~**HAProxy on the host**, TCP passthrough to all three nodes, replacing the single-target
+  DNAT.~~ **Done 2026-09-17 — `bootstrap/05-haproxy.sh`.** Two things it bought at once:
+
+  1. **The SPOF is gone.** The DNAT named one node, so that node going down took ingress with it
+     regardless of where Traefik was scheduled. Drill: the site served `HTTP 200` with two of the
+     three backends forced into MAINT. Do not substitute `-m statistic --mode nth` — with no health
+     checking it black-holes a third of requests the moment a node fails.
+  2. **The hairpin fixed itself.** DNAT preserves the source address, so the targeted node received
+     a packet with `src == dst` and dropped it as a martian; cert-manager's HTTP-01 self-check runs
+     over that path. HAProxy terminates the connection and opens a *new* one from the host, so the
+     two can never be equal. All three nodes now reach the public address (`HTTP 301`, where
+     `k8s-1` returned `000`).
+
+  Health-check on `:80` for **both** pools: a bare TCP connect succeeds against klipper-lb even
+  when no Traefik is behind it, so the probe has to be HTTP. Afterwards the DNAT, the
+  `LIBVIRT_FWI` accept and the hairpin MASQUERADE were all removed — rollback is
+  `systemctl enable --now vaullet-ingress.service`, which re-creates all three.
+
+  **One regression to know about:** `mode tcp` means Traefik sees the host, not the caller. Nothing
+  depends on the client address today (no middlewares, access logs off). When something does, the
+  answer is `send-proxy-v2` plus `proxyProtocol.trustedIPs` on the Traefik entrypoints, landed on
+  both sides together.
 - **Move this to a script** under `bootstrap/`. Phases 1–3 are the reusable part and belong there;
   phases 6–8 are one-off. The host-side ingress rules are already done — `bootstrap/04-ingress.sh`. ADR-015 flags that the hypervisor layer sits outside GitOps, which is a
   real departure from "the whole cluster, as git" and should not stay hand-run.
