@@ -21,6 +21,11 @@ kubectl get all -A                        > all.txt
 kubectl get applications -n argocd        > argo.txt
 kubectl get pvc -A                        > pvc.txt
 kubectl get certificate -A                > certs.txt
+kubectl get externalsecret,clustersecretstore,secretstore -A > secretstores.txt
+
+# the part that is NOT in git: the running node's own RKE2 config
+cp /etc/rancher/rke2/config.yaml            rke2-config.yaml
+cat rke2-config.yaml                        # no secrets in it; read every line
 
 umask 077
 kubectl -n traefik get secret vaullet-dev-tls -o yaml \
@@ -41,6 +46,14 @@ chmod 600 tls.yaml
 
 **Never `cat`, `head` or `less` this file.** Same rule as the OpenBao unseal keys: a secret that
 reaches a terminal has reached everything recording that terminal.
+
+⛔ **STOP** — every setting in `rke2-config.yaml` must appear in the new nodes' config in step 4.
+`bootstrap/01-rke2.sh` writes that file, but the running node can have drifted and nothing
+reconciles them. On the live split three settings were missing from the new nodes:
+`disable: [rke2-traefik, rke2-ingress-nginx, rke2-traefik-crd]` (RKE2's bundled Traefik was running
+and would have fought ours for :80/:443), `enable-servicelb: true` (without it the Traefik Service
+never gets an external address, so the DNAT has nothing to reach) and
+`write-kubeconfig-mode: "0600"`. None of them is visible from `kubectl`.
 
 ---
 
@@ -326,43 +339,75 @@ ssh vaullet 'ssh root@192.168.122.11 "KUBECONFIG=/etc/rancher/rke2/rke2.yaml \
   /var/lib/rancher/rke2/bin/kubectl -n traefik apply -f /root/tls.yaml"'
 ```
 
-Test the new cluster on a spare port — the old one keeps serving 80/443:
+Test the new cluster on a spare port — the old one keeps serving 80/443. **Two rules**: a DNAT
+alone will not get you into a libvirt guest.
 
 ```sh
-iptables -t nat -I PREROUTING 1 -p tcp --dport 8443 -j DNAT --to 192.168.122.11:443
+# on the host
+iptables -I LIBVIRT_FWI 1 -d 192.168.122.11/32 -o virbr0 -p tcp --dport 443 -j ACCEPT
+iptables -t nat -I PREROUTING 1 -d 65.109.58.119/32 -p tcp --dport 8443 \
+  -j DNAT --to-destination 192.168.122.11:443
+```
+
+```sh
+# FROM YOUR LAPTOP. On the host this goes through OUTPUT, not PREROUTING,
+# and proves nothing.
 curl -k --resolve vaullet.dev:8443:65.109.58.119 https://vaullet.dev:8443/ -I
-iptables -t nat -D PREROUTING -p tcp --dport 8443 -j DNAT --to 192.168.122.11:443
+
+# and check it is the certificate you expect (metadata only, never the key):
+echo | openssl s_client -connect 65.109.58.119:8443 -servername vaullet.dev 2>/dev/null \
+  | openssl x509 -noout -subject -fingerprint -sha256 -dates
+```
+
+```sh
+# on the host, clean up the test DNAT -- leave the LIBVIRT_FWI accept, step 7 needs it
+iptables -t nat -D PREROUTING -d 65.109.58.119/32 -p tcp --dport 8443 \
+  -j DNAT --to-destination 192.168.122.11:443
 ```
 
 ⛔ **STOP** — that `curl` returns `HTTP/2 200`. If not, do **not** cut over.
+
+`000` in roughly 50 ms means the `LIBVIRT_FWI` accept is missing, not that the cluster is broken:
+libvirt's network ends its inbound chain with `REJECT --reject-with icmp-port-unreachable`, so the
+host accepts the connection and then refuses it internally.
 
 ---
 
 ## 7 — Cutover
 
-Pin Traefik to `k8s-1`:
-
-```sh
-ssh root@192.168.122.11 'KUBECONFIG=/etc/rancher/rke2/rke2.yaml \
-  /var/lib/rancher/rke2/bin/kubectl -n traefik patch deployment traefik --type=merge \
-  -p "{\"spec\":{\"template\":{\"spec\":{\"nodeSelector\":{\"kubernetes.io/hostname\":\"k8s-1\"}}}}}"'
-```
+**Do not pin Traefik.** `enable-servicelb` runs an `svclb` pod on every node forwarding into the
+Traefik Service, so the DNAT target does not have to be the node Traefik runs on.
 
 The only user-visible moment:
 
 ```sh
 systemd-run --on-active=5min --unit=panic-reboot systemctl reboot
 
-# -I PREROUTING 1, NOT -A. Nothing listens on 80/443 on the host (`ss -ltnp` shows
-# only the apiserver): Traefik is reached by CNI hostPort DNAT rules already sitting
-# in PREROUTING. An APPENDED rule lands after those, so the packet reaches the OLD
-# cluster and the cutover silently does nothing. Inserting at position 1 wins.
-iptables -t nat -I PREROUTING 1 -p tcp --dport 443 -j DNAT --to 192.168.122.11:443
-iptables -t nat -I PREROUTING 1 -p tcp --dport 80  -j DNAT --to 192.168.122.11:80
+# 1. -I PREROUTING 1, NOT -A. cali-PREROUTING and CNI-HOSTPORT-DNAT are already in
+#    this chain; an APPENDED rule lands after them and the cutover does nothing.
+#    -d 65.109.58.119/32 is REQUIRED -- see the warning below.
+iptables -t nat -I PREROUTING 1 -d 65.109.58.119/32 -p tcp --dport 443 \
+  -j DNAT --to-destination 192.168.122.11:443
+iptables -t nat -I PREROUTING 1 -d 65.109.58.119/32 -p tcp --dport 80 \
+  -j DNAT --to-destination 192.168.122.11:80
 
-# verify ours are first:
-iptables -t nat -S PREROUTING | head -3
+# 2. libvirt only passes RELATED,ESTABLISHED inbound; allow the new flows
+iptables -I LIBVIRT_FWI 1 -d 192.168.122.11/32 -o virbr0 -p tcp \
+  -m multiport --dports 80,443 -j ACCEPT
+
+# 3. NAT loopback, or guests reaching the public hostname break
+iptables -t nat -I POSTROUTING 1 -s 192.168.122.0/24 -d 192.168.122.11/32 \
+  -p tcp -m multiport --dports 80,443 -j MASQUERADE
+
+# verify the DNAT rules sit above cali-PREROUTING / CNI-HOSTPORT-DNAT:
+iptables -t nat -S PREROUTING | head -4
 ```
+
+> ⚠️ **Omitting `-d 65.109.58.119/32` breaks every outbound HTTPS connection from the cluster.**
+> Packets leaving the guests are forwarded, so they traverse `PREROUTING` as well, and an unscoped
+> rule bends them back into your own ingress. You will see
+> `x509: certificate is valid for ...traefik.default, not acme-v02.api.letsencrypt.org`
+> and lose ACME, registry pulls and Argo's git fetches. The spare-port test cannot catch it.
 
 From your **laptop**:
 
@@ -372,20 +417,32 @@ curl -I https://vaullet.dev/
 
 ⛔ **STOP** — `HTTP/2 200` and a valid certificate.
 
+Both clusters return the same body, so confirm with packet counters, not the response:
+
+```sh
+iptables -t nat -L PREROUTING -n -v --line-numbers | head -6
+# …a few requests from your laptop…
+iptables -t nat -L PREROUTING -n -v --line-numbers | head -6   # the counter must move
+```
+
 **If it works:**
 
 ```sh
 systemctl stop panic-reboot.timer
 systemctl reset-failed panic-reboot.service 2>/dev/null || true
-apt install -y iptables-persistent
-netfilter-persistent save
+
+# NOT iptables-persistent: netfilter-persistent save would snapshot Calico's and
+# RKE2's whole rule set and replay it at boot before either is running.
+cd /root/gitops && bootstrap/04-ingress.sh
 ```
 
 **If it does not — rollback, immediately:**
 
 ```sh
-iptables -t nat -D PREROUTING -p tcp --dport 80  -j DNAT --to 192.168.122.11:80
-iptables -t nat -D PREROUTING -p tcp --dport 443 -j DNAT --to 192.168.122.11:443
+iptables -t nat -D PREROUTING -d 65.109.58.119/32 -p tcp --dport 80 \
+  -j DNAT --to-destination 192.168.122.11:80
+iptables -t nat -D PREROUTING -d 65.109.58.119/32 -p tcp --dport 443 \
+  -j DNAT --to-destination 192.168.122.11:443
 curl -I https://vaullet.dev/
 ```
 
@@ -395,10 +452,38 @@ curl -I https://vaullet.dev/
 
 ```sh
 systemctl disable --now rke2-server
-curl -I https://vaullet.dev/
+
+# stopping the unit leaves containerd's children running -- the RAM comes back here
+/usr/local/bin/rke2-killall.sh
+
+# killall rewrites iptables; re-assert ours
+/usr/local/sbin/vaullet-ingress-rules.sh
+
+# the host kubeconfig now points at a dead apiserver, and kubectl itself
+# disappears at uninstall
+cp /var/lib/rancher/rke2/bin/kubectl /usr/local/bin/kubectl
+umask 077 && mkdir -p /root/.kube
+cp /root/.kube/config /root/.kube/config.old-cluster.bak 2>/dev/null || true
+ssh root@192.168.122.11 'cat /etc/rancher/rke2/rke2.yaml' \
+  | sed 's|https://127.0.0.1:6443|https://192.168.122.11:6443|' > /root/.kube/config
+chmod 600 /root/.kube/config
+
+# and the export that overrides it -- 01-rke2.sh appended this when RKE2 ran on
+# the host. KUBECONFIG wins over ~/.kube/config; it does not fall back to it.
+cp /root/.bashrc /root/.bashrc.pre-split.bak
+sed -i 's|^export KUBECONFIG=/etc/rancher/rke2/rke2.yaml$|export KUBECONFIG=/root/.kube/config|' \
+  /root/.bashrc
+
+bash -ic 'kubectl get nodes'    # -ic, NOT -lc: a login shell skips .bashrc
 ```
 
-After another day:
+```sh
+curl -I https://vaullet.dev/          # from your laptop
+```
+
+After another day — **this destroys the old etcd data and the old `local-path` PVCs, OpenBao's
+included.** Check `kubectl get externalsecret,clustersecretstore,secretstore -A` against the old
+cluster first; if it is empty, nothing consumed them.
 
 ```sh
 /usr/local/bin/rke2-uninstall.sh
@@ -406,15 +491,19 @@ After another day:
 
 Grow the VMs and pin their vCPUs:
 
+**One node at a time.** This cluster is now serving live traffic and shutting all three down at
+once is both an outage and a needless etcd risk. Two of three keeps quorum; wait for each node to
+come back `Ready` before touching the next:
+
 ```sh
 for i in 1 2 3; do
   virsh shutdown k8s-$i
-done
-sleep 45
-for i in 1 2 3; do
+  while virsh domstate k8s-$i 2>/dev/null | grep -q running; do sleep 5; done
   virsh setmaxmem k8s-$i 16G --config
   virsh setmem    k8s-$i 16G --config
   virsh start k8s-$i
+  until kubectl get node k8s-$i --no-headers 2>/dev/null | grep -qw Ready; do sleep 5; done
+  kubectl get nodes
 done
 
 virsh vcpupin k8s-1 0 0 --config; virsh vcpupin k8s-1 1 1 --config

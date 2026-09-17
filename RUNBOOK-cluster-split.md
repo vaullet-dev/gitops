@@ -11,8 +11,9 @@ the rollback.
 now       AX41 ── RKE2 (bare metal)                       serving vaullet.dev
 build     AX41 ── RKE2 (bare metal)                       still serving
                └─ libvirt ── k8s-1 / k8s-2 / k8s-3        new cluster, verified on spare ports
-cut over  DNAT :80 :443 → 192.168.122.11
-rollback  delete the two rules
+cut over  three rules on the host: DNAT :80 :443 → 192.168.122.11,
+          a LIBVIRT_FWI accept, and a hairpin MASQUERADE
+rollback  delete the two DNAT rules
 reclaim   stop rke2-server on the host, grow the VMs
 ```
 
@@ -48,12 +49,32 @@ kubectl get nodes -o wide                          > nodes.txt
 kubectl get all -A                                 > all.txt
 kubectl get applications -n argocd                 > argo.txt
 kubectl get pvc -A                                 > pvc.txt
-kubectl -n web get secret -o yaml                  > web-secrets.yaml   # the TLS cert, needed in Phase 6
+kubectl get externalsecret,clustersecretstore,secretstore -A > secretstores.txt
+kubectl -n traefik get secret vaullet-dev-tls -o yaml > tls.yaml   # needed in Phase 6
+chmod 600 tls.yaml                                 # it holds the private key
 rke2 etcd-snapshot save --name pre-split
+
+# THE PART THAT IS NOT IN GIT, and the easiest to forget:
+cp /etc/rancher/rke2/config.yaml                     rke2-config.yaml
 ```
 
 `rke2 etcd-snapshot` writes to `/var/lib/rancher/rke2/server/db/snapshots/`. It is insurance for the
 *old* cluster, not a migration path — the new cluster starts empty by design.
+
+**Read `rke2-config.yaml` and carry every line of it to the new nodes.** `bootstrap/01-rke2.sh`
+writes this file, but the running node may have drifted from it, and nothing reconciles the two.
+On the live split the old node carried three settings the new ones were built without:
+
+| Setting | What happens without it |
+|---|---|
+| `disable: [rke2-traefik, rke2-ingress-nginx, rke2-traefik-crd]` | RKE2's own bundled Traefik runs alongside ours and fights for :80/:443 |
+| `enable-servicelb: true` | no `svclb` pods, so the Traefik Service never gets an external address and the DNAT has nothing to reach |
+| `write-kubeconfig-mode: "0600"` | the kubeconfig is world-readable |
+
+The first two would each have broken the cutover, and neither is visible from `kubectl`.
+
+`tls.yaml` contains a private key. Never `cat`, `head` or `less` it — check it with `grep -c`,
+`wc -c` and `openssl x509 -noout`.
 
 **Rollback:** nothing has changed.
 
@@ -278,21 +299,47 @@ it. And `.dev` is HSTS-preloaded: a missing certificate is a hard failure with n
 carry the existing cert across and let cert-manager renew it later:
 
 ```sh
-# on the OLD cluster
-kubectl -n web get secret <tls-secret> -o yaml \
+# on the OLD cluster — the secret lives in the Traefik namespace, not web
+kubectl -n traefik get secret vaullet-dev-tls -o yaml \
   | grep -v '^\s*\(creationTimestamp\|resourceVersion\|uid\|namespace\):' > /root/pre-split/tls.yaml
 # on the NEW cluster
-kubectl -n web apply -f tls.yaml
+kubectl -n traefik apply -f tls.yaml
 ```
 
-Verify the new cluster serves the site on a spare port, **without touching 80/443**:
+Never `cat`, `head` or `less` that file — it contains the private key. Check it with
+`grep -c`, `wc -c` and `openssl x509 -noout` only.
+
+**Carrying the secret across does not cancel the issuance already in flight.** cert-manager will
+have started one the moment its Application synced and the Secret did not yet exist, and the
+`Issuing` condition is *latched*: it clears when an issuance completes, not when a valid Secret
+appears. Deleting the CertificateRequest only restarts it. So expect the challenges to complete
+shortly after cutover and a **new certificate with a new fingerprint** to replace the carried one.
+That is harmless — and one more key rotation — but verify the fingerprint afterwards rather than
+being surprised by it.
+
+Verify the new cluster serves the site on a spare port, **without touching 80/443**. This needs
+*two* rules, not one: libvirt's network will not pass a new inbound connection to a guest on the
+strength of a DNAT alone.
 
 ```sh
-# on the host — spare ports, so the old cluster keeps serving the real ones
-iptables -t nat -I PREROUTING 1 -p tcp --dport 8443 -j DNAT --to 192.168.122.11:443
+# on the host — spare port, so the old cluster keeps serving the real ones
+iptables -I LIBVIRT_FWI 1 -d 192.168.122.11/32 -o virbr0 -p tcp --dport 443 -j ACCEPT
+iptables -t nat -I PREROUTING 1 -d 65.109.58.119/32 -p tcp --dport 8443 \
+  -j DNAT --to-destination 192.168.122.11:443
+
+# FROM YOUR LAPTOP. Traffic this box originates to its own address goes through
+# OUTPUT, never PREROUTING, so running the curl on the host tests nothing.
 curl -k --resolve vaullet.dev:8443:65.109.58.119 https://vaullet.dev:8443/ -I
-iptables -t nat -D PREROUTING -p tcp --dport 8443 -j DNAT --to 192.168.122.11:443
+
+iptables -t nat -D PREROUTING -d 65.109.58.119/32 -p tcp --dport 8443 \
+  -j DNAT --to-destination 192.168.122.11:443
 ```
+
+**If that returns `000` in about 50 ms**, the missing piece is the `LIBVIRT_FWI` accept, not the
+cluster. libvirt's default network is outbound-only: it accepts `RELATED,ESTABLISHED` and ends the
+chain with `REJECT --reject-with icmp-port-unreachable`. The host accepts the connection and then
+refuses it internally, which looks exactly like a dead service. The instant failure is the tell — a
+`DROP` would hang until curl's timeout.
 
 **Do not DNAT 6443 during the overlap** — the host's own apiserver is on it. Use 6444 if you want
 kubectl from your laptop before cutover, or just tunnel over SSH.
@@ -303,39 +350,75 @@ kubectl from your laptop before cutover, or just tunnel over SSH.
 
 ## Phase 7 — Cutover
 
-Traefik pinned to `k8s-1` (ADR-015 §4, stage one — HAProxy across all three comes later):
+**Do not pin Traefik to a node.** `enable-servicelb` puts a klipper-lb (`svclb`) pod on *every*
+node, each forwarding into the Traefik Service, so any node address is a valid entry point no
+matter where the Traefik pod is scheduled. On the live cutover the DNAT pointed at `k8s-1` while
+Traefik ran on `k8s-3` and it served correctly throughout. Pinning buys nothing and costs
+scheduling freedom.
 
-```sh
-kubectl -n traefik patch deployment traefik --type=merge \
-  -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"k8s-1"}}}}}'
-```
-
-Then, on the host — **this is the only user-visible moment**:
+Publishing the cluster on the host's address takes **three rules across two tables**. Only the
+first is obvious, and each of the other two fails in a way that reads as something else entirely:
 
 ```sh
 systemd-run --on-active=5min --unit=panic-reboot systemctl reboot   # arm
 
-# -I PREROUTING 1, NOT -A. Nothing listens on 80/443 on the host (`ss -ltnp` shows
-# only the apiserver): Traefik is reached by CNI hostPort DNAT rules already sitting
-# in PREROUTING. An APPENDED rule lands after those, so the packet reaches the OLD
-# cluster and the cutover silently does nothing. Inserting at position 1 wins.
-iptables -t nat -I PREROUTING 1 -p tcp --dport 443 -j DNAT --to 192.168.122.11:443
-iptables -t nat -I PREROUTING 1 -p tcp --dport 80  -j DNAT --to 192.168.122.11:80
+# 1. rewrite the destination. -I PREROUTING 1, NOT -A: Calico's cali-PREROUTING and
+#    RKE2's CNI-HOSTPORT-DNAT are in this chain already, and an APPENDED rule lands
+#    after them -- the packet reaches the OLD cluster and the cutover silently does
+#    nothing. And -d <public ip> is load-bearing, see the warning below.
+iptables -t nat -I PREROUTING 1 -d 65.109.58.119/32 -p tcp --dport 443 \
+  -j DNAT --to-destination 192.168.122.11:443
+iptables -t nat -I PREROUTING 1 -d 65.109.58.119/32 -p tcp --dport 80 \
+  -j DNAT --to-destination 192.168.122.11:80
 
-# verify ours are first:
-iptables -t nat -S PREROUTING | head -3
+# 2. let the connection actually reach the guest. libvirt's network accepts only
+#    RELATED,ESTABLISHED inbound and REJECTs the rest.
+iptables -I LIBVIRT_FWI 1 -d 192.168.122.11/32 -o virbr0 -p tcp \
+  -m multiport --dports 80,443 -j ACCEPT
 
-curl -I https://vaullet.dev/            # from your laptop, not the box
+# 3. NAT loopback. Without it a guest that resolves the public hostname is DNAT-ed
+#    to a neighbour on the same bridge, which replies directly, outside conntrack.
+iptables -t nat -I POSTROUTING 1 -s 192.168.122.0/24 -d 192.168.122.11/32 \
+  -p tcp -m multiport --dports 80,443 -j MASQUERADE
+
+# verify the DNAT rules are above cali-PREROUTING and CNI-HOSTPORT-DNAT:
+iptables -t nat -S PREROUTING | head -4
+
+curl -I https://vaullet.dev/          # from your laptop, not the box
 ```
 
-If it serves: `systemctl stop panic-reboot.timer`, then persist the rules
-(`apt install iptables-persistent` / `netfilter-persistent save`).
+> ⚠️ **The `-d <public ip>` on the DNAT rules is not a refinement — leaving it off breaks all
+> outbound HTTPS from the cluster.** Traffic *leaving* the guests is forwarded traffic, so it
+> traverses `PREROUTING` too. An unscoped `--dport 443 -j DNAT` matches it and bends every
+> outbound call back into your own ingress. The symptom is a TLS error naming Traefik's default
+> certificate — `x509: certificate is valid for ...traefik.default, not
+> acme-v02.api.letsencrypt.org` — and it takes ACME, registry pulls over 443 and Argo's git
+> fetches with it. A spare-port test cannot catch this, because the spare port matches nothing
+> outbound.
+
+Confirm the rules are matching rather than assuming it. Packet counters are the only honest
+check, because the response body is identical from either cluster:
+
+```sh
+iptables -t nat -L PREROUTING -n -v --line-numbers | head -6   # before
+# …a few requests from your laptop…
+iptables -t nat -L PREROUTING -n -v --line-numbers | head -6   # the counter must move
+```
+
+If it serves: `systemctl stop panic-reboot.timer`, then make the rules survive a reboot with
+`bootstrap/04-ingress.sh`, which installs them as an idempotent script plus a systemd unit and a
+libvirt network hook.
+
+**Do not use `iptables-persistent`.** `netfilter-persistent save` snapshots the *whole* table —
+Calico's chains, RKE2's, everything — and replays it at boot before either is running.
 
 **Rollback — the whole point of the shape:**
 
 ```sh
-iptables -t nat -D PREROUTING -p tcp --dport 80  -j DNAT --to 192.168.122.11:80
-iptables -t nat -D PREROUTING -p tcp --dport 443 -j DNAT --to 192.168.122.11:443
+iptables -t nat -D PREROUTING -d 65.109.58.119/32 -p tcp --dport 80 \
+  -j DNAT --to-destination 192.168.122.11:80
+iptables -t nat -D PREROUTING -d 65.109.58.119/32 -p tcp --dport 443 \
+  -j DNAT --to-destination 192.168.122.11:443
 ```
 
 The old cluster never stopped running. Traffic returns to it immediately.
@@ -348,9 +431,51 @@ Leave the old cluster running for a day. When you are done:
 
 ```sh
 systemctl disable --now rke2-server           # on the HOST
-# after another day, and only then:
+
+# stopping the unit does NOT stop its containers -- KillMode leaves containerd's
+# children running, so the RAM you came for is not returned until:
+/usr/local/bin/rke2-killall.sh
+
+# killall pipes iptables-save through `grep -v KUBE-/CNI-/cali-/flannel` into
+# iptables-restore. Our rules survive that filter, but re-assert them anyway:
+/usr/local/sbin/vaullet-ingress-rules.sh
+curl -I https://vaullet.dev/                  # from your laptop
+
+# the host's kubeconfig now points at a dead apiserver. Repoint it, and keep a
+# kubectl that outlives the uninstall:
+cp /var/lib/rancher/rke2/bin/kubectl /usr/local/bin/kubectl
+umask 077 && mkdir -p /root/.kube
+ssh root@192.168.122.11 'cat /etc/rancher/rke2/rke2.yaml' \
+  | sed 's|https://127.0.0.1:6443|https://192.168.122.11:6443|' > /root/.kube/config
+chmod 600 /root/.kube/config
+
+# AND the export that overrides it. bootstrap/01-rke2.sh appended this to
+# /root/.bashrc back when RKE2 ran on the host; it now names a dead apiserver,
+# and KUBECONFIG beats ~/.kube/config outright rather than falling back to it.
+sed -i 's|^export KUBECONFIG=/etc/rancher/rke2/rke2.yaml$|export KUBECONFIG=/root/.kube/config|' \
+  /root/.bashrc
+```
+
+Verify it with `bash -ic 'kubectl get nodes'`, not `bash -lc`. A login non-interactive shell does
+not read `.bashrc`, so `-lc` passes while your own terminal still fails — the asymmetry hides this
+exact class of leftover.
+
+`rke2-killall.sh` deletes network interfaces, but only named CNI ones — `cni0`, `flannel.*`,
+`vxlan.calico`, `cilium_*`, `kube-ipvs0`, `nodelocaldns` — plus anything mastered by `cni0`. The
+guests' `vnet*` are mastered by `virbr0`, so they are untouched. Worth re-reading the script before
+running it rather than trusting that.
+
+Only after another day, and only once you accept losing the rollback:
+
+```sh
 /usr/local/bin/rke2-uninstall.sh
 ```
+
+> ⚠️ **Uninstall destroys the old cluster's etcd data and its `local-path` PVCs, including
+> OpenBao's.** Check `kubectl get externalsecret,clustersecretstore,secretstore -A` on the old
+> cluster first: if that is empty, nothing consumed those credentials and re-initialising OpenBao
+> on the new cluster costs nothing. If it is not empty, decide how the data moves *before* you
+> run this.
 
 Then grow the VMs to their ADR-015 size and pin their vCPUs:
 
@@ -374,10 +499,20 @@ virsh vcpupin k8s-1 0 0 --config ; virsh vcpupin k8s-1 1 1 --config   # …and s
 
 ## After
 
-- **HAProxy on the host**, TCP passthrough to all three nodes, replacing the pinned-Traefik DNAT.
-  Until then, `k8s-1` going down takes ingress with it.
+- **HAProxy on the host**, TCP passthrough to all three nodes, replacing the single-target DNAT.
+  Until then, `k8s-1` going down takes ingress with it — not because Traefik lives there, but
+  because the DNAT names it. Do not reach for `-m statistic --mode nth` across the three addresses
+  instead: with no health checking it black-holes a third of requests the moment a node goes down,
+  which is worse than one honest point of failure.
+- **Split-horizon DNS for the public hostnames.** The DNAT target cannot reach the public address
+  through the host: the packet is DNAT-ed to itself, never gets SNAT-ed, and arrives with
+  `src == dst`, where the kernel drops it as a martian. The other two nodes hairpin fine. Nothing
+  is broken today because cert-manager happens to run elsewhere, but a pod scheduled onto the
+  target node that calls the site by name will fail, and cert-manager's HTTP-01 self-check is
+  exactly such a call. Resolving the hostnames to the in-cluster Traefik Service removes the
+  hairpin for all three nodes and drops a host round-trip.
 - **Move this to a script** under `bootstrap/`. Phases 1–3 are the reusable part and belong there;
-  phases 6–8 are one-off. ADR-015 flags that the hypervisor layer sits outside GitOps, which is a
+  phases 6–8 are one-off. The host-side ingress rules are already done — `bootstrap/04-ingress.sh`. ADR-015 flags that the hypervisor layer sits outside GitOps, which is a
   real departure from "the whole cluster, as git" and should not stay hand-run.
 - **`gitops/README.md`** — update "single-node RKE2" to describe what now exists.
 

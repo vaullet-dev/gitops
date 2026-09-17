@@ -5,6 +5,9 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
 ## Before calling the cluster done
 
 - [ ] **Rotate the Argo CD admin password, then delete the bootstrap secret.**
+      **Re-armed 2026-09-17 by the cluster split:** Argo CD was bootstrapped
+      fresh on the three-node cluster, so there is a new
+      `argocd-initial-admin-secret` and the old cluster's is gone with it.
       `02-argocd.sh` prints an initial password on first run; it stays in the
       cluster as a Secret afterwards, and in whatever terminal scrollback or
       transcript it was printed into. Log in, set a real password, then:
@@ -36,7 +39,17 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
 
 ## OpenBao
 
-- [x] ~~First bring-up.~~ Done 2026-09-14: initialised, unsealed, configured.
+- [ ] **Initialise OpenBao on the three-node cluster.** The instance that was
+      initialised on 2026-09-14 belonged to the old single node, which was
+      disabled on 2026-09-17. Its data is still on disk in that node's
+      `local-path` PVC, and `rke2-uninstall.sh` will destroy it. Nothing ever
+      consumed it — `kubectl get externalsecret,clustersecretstore,secretstore -A`
+      was empty on the old cluster at shutdown — so there is nothing to migrate
+      and re-initialising costs nothing. Run `bootstrap/03-openbao.sh init` in
+      your own SSH session; the new shares replace the ones exposed 2026-09-15.
+
+- [x] ~~First bring-up.~~ Done 2026-09-14 on the old node: initialised,
+      unsealed, configured. Superseded by the line above.
 
 - [x] ~~Prove the seal once.~~ Done 2026-09-14: pod deleted, came back
       sealed, unsealed again.
@@ -60,6 +73,36 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       Once there is an admin identity (userpass or GitHub OIDC with a
       narrow policy), revoke the root token and use
       `bao operator generate-root` with the key shares for emergencies only.
+
+## Left over from the cutover, 2026-09-17
+
+- [ ] **Uninstall the old node, but not yet.** `rke2-server` is stopped and
+      disabled and `rke2-killall.sh` has released its RAM, so the old cluster
+      costs nothing but disk. `rke2-uninstall.sh` is the irreversible step: it
+      destroys the old etcd data and the old `local-path` PVCs, OpenBao's
+      included. That is the only rollback path off the three-node cluster, so
+      leave it a few days.
+
+- [ ] **Grow the VMs to their ADR-015 size, one at a time.** They are still at
+      the 12 GiB they were given during the overlap. Two of three keeps etcd
+      quorum; the commands are in `RUNBOOK-cluster-split-commands.md` §8. vCPU
+      pinning belongs in the same pass — CPU steal causing spurious etcd leader
+      elections is the classic virtualised-etcd failure.
+
+- [ ] **Split-horizon DNS for `vaullet.dev` and `argo.vaullet.dev`.** The DNAT
+      target node cannot reach the public address through the host: the packet is
+      DNAT-ed to itself, never SNAT-ed, and arrives with `src == dst`, where the
+      kernel drops it as a martian. The other two nodes hairpin correctly.
+      Nothing is broken today only because cert-manager runs elsewhere — and
+      cert-manager's HTTP-01 self-check is exactly the call that breaks. Point
+      the hostnames at the in-cluster Traefik Service and the hairpin disappears
+      for all three nodes.
+
+- [ ] **HAProxy on the host, replacing the single-target DNAT.** Ingress names
+      one node; that node going down takes the site with it, regardless of where
+      Traefik is scheduled. Do not substitute `-m statistic --mode nth` across
+      the three addresses: with no health checks it black-holes a third of
+      requests the moment a node fails, which is worse than one honest SPOF.
 
 ## Once the stack is verified
 
@@ -119,8 +162,11 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       GiB — **19%**, not the ~40% first guessed — leaving ~51 GiB against a
       ~25 GiB core deployment.
 
-      Not yet executed. The runbook is the next artefact; the ADR deliberately
-      contains no commands.
+      **Executed 2026-09-17.** Three VMs built alongside the running cluster,
+      platform synced, then cut over by DNAT on the host; the old node was
+      stopped and disabled the same day. See `RUNBOOK-cluster-split.md` for what
+      the cutover actually required — three iptables rules across two tables, not
+      the one the runbook originally documented.
 
 - [ ] **`local-path` is node-local — and ADR-015 makes this live.** With three
       nodes a rescheduled pod can no longer reach its volume. Decided alongside
