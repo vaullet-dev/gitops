@@ -7,6 +7,13 @@ Target: one Hetzner AX41 (Ryzen 5 3600, 64 GB ECC, 2x512 GB NVMe), Ubuntu 26.04
 LTS, single-node RKE2. **Production topology, not production grade** — one PSU,
 one board, one node. That is deliberate and it is stated rather than hidden.
 
+**Moving to three RKE2 server VMs on this same box**, decided 2026-09-17 in
+[ADR-015](../architecture/docs/adr/015-cluster-topology-three-servers-on-one-machine.md)
+and not yet executed. That buys etcd quorum, working PodDisruptionBudgets, live
+drains and Kafka RF=3. It buys **no** hardware resilience: three VMs still share
+one PSU, one board and one disk array, so the line above stays true — and
+becomes more accurate rather than less.
+
 ## Why RKE2, not k3s
 
 etcd is the datastore with no flag to forget, the control plane runs as static
@@ -60,9 +67,19 @@ mirror across both NVMe drives, so a single disk failure does not lose data.
 
 **It is node-local.** `volumeBindingMode: WaitForFirstConsumer` means a PV is
 bound only once a pod is scheduled, and it is then pinned to that node. On one
-node this is invisible. The moment a second node exists, a pod that reschedules
-elsewhere cannot reach its volume — that is the point to decide whether
-stateful services get node affinity or real replicated storage.
+node this is invisible; [ADR-015](../architecture/docs/adr/015-cluster-topology-three-servers-on-one-machine.md)
+makes it visible by moving to three.
+
+The answer chosen there is **per-instance volumes, pinned** — not replicated
+storage. CloudNativePG gives each PostgreSQL instance its own volume and
+recommends local disks; Kafka behaves the same way. Longhorn was rejected:
+replicating three ways onto one RAID1 array multiplies writes without adding
+durability, because there is only ever one array underneath.
+
+**There is no `VolumeSnapshotClass`.** `rke2-snapshot-controller` runs, but
+`local-path` is not a CSI driver that supports snapshots, so `kubectl get
+volumesnapshotclass` returns nothing. Anything planning to back up by snapshot —
+CloudNativePG can — has to use an object store here instead.
 
 ## Project groups
 
@@ -83,45 +100,28 @@ before any AppProject exists, so it cannot depend on one.
 
 ## Progressive delivery
 
-`web` is a `Rollout`, not a `Deployment`. A new image gets **50% of the requests**
-and then **stops**, waiting for a human to click Promote or Abort.
+`web` is a `Rollout` with a **blue-green** strategy. A new image starts a full
+second set of pods. When all of them are Ready, the controller switches the
+`web` Service to them in one step, and removes the old pods 30 seconds later.
+Every visitor sees one version, and there is no manual Promote.
 
-Requests, not replicas. The weight is applied by Traefik: the `web` HTTPRoute has
-two weighted backends (`web-stable`, `web-canary`) and Argo Rollouts' Gateway API
-plugin rewrites those weights as the rollout advances.
+It was a 50% canary that paused for Promote. The pause was never clicked, so
+the site served old and new content side by side. Canary stays the right tool
+for services where a bad version can be measured on part of the traffic. For a
+presentation page it only produced inconsistency.
 
-That is what lets `web` run at **`replicas: 1`** and still canary properly. One
-pod at rest; at the pause the controller rounds the canary up to a single pod, so
-there are two — one per version — and Traefik splits requests between them.
-Without the plugin the split would follow pod arithmetic, and at one replica a
-weight has nothing to divide: kube-proxy would pick per connection.
+The Gateway API traffic-router plugin is still installed in
+`clusters/prod/argo-rollouts.yaml`, for a future canary on a real service. No
+Rollout uses it today.
 
-The plugin is a separate process, not part of the controller binary, and is
-delivered by an init container in `clusters/prod/argo-rollouts.yaml` rather than
-downloaded from GitHub at every controller start. It needs no extra RBAC: the
-chart's `providerRBAC.providers.gatewayAPI` already grants the controller
-`update` on `httproutes`, which is the only verb the plugin uses.
-
-**The live HTTPRoute is meant to differ from git while a canary runs.** The `web`
-Application therefore ignores `.spec.rules[].backendRefs[].weight` and the
-plugin's `rollouts.argoproj.io/gatewayapi-canary` label, and syncs with
-`RespectIgnoreDifferences=true`. Without the first, `selfHeal` would reset the
-weights within seconds and quietly end the canary while the Rollout still
-reported *paused*; without the second, any sync during the pause — a click, or
-the next image-tag commit — would do the same thing.
-
-The distinction that matters when combining this with GitOps:
+With GitOps, the actions differ in whether they survive `selfHeal`:
 
 | Action | Works with `selfHeal: true`? | Why |
 |---|---|---|
 | Promote / Abort / Retry | **yes** | acts on an in-flight rollout, changes no spec |
 | Rollback to revision N | no | edits the spec; Argo drift-corrects it back within ~3 min |
 
-So the button-driven half of delivery works without weakening `selfHeal`.
-A *permanent* rollback is still `git revert`, which ADR-010 already commits to.
-If you want the Argo CD History-and-Rollback button live for an app, turn
-`selfHeal` off for that app specifically — and accept that the cluster can then
-drift from git without complaint.
+A permanent rollback is `git revert` of the deploy commit.
 
 ## Sync waves
 
@@ -137,7 +137,7 @@ Argo waits for each wave to go Healthy before starting the next.
  0  traefik       GatewayClass + the shared Gateway "vaullet"
  0  openbao       credential store; sealed until bootstrap/03-openbao.sh
  1  cluster-issuers  letsencrypt-staging / -prod, http01 via gatewayHTTPRoute
- 2  web           the public site, from the vaullet-dev/web repo
+ 2  web           the public site, from the vaullet-dev/web repo (blue-green)
 ```
 
 The wave -1/0 order matters and is not cosmetic. cert-manager's gateway-shim

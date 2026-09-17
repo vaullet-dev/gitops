@@ -36,11 +36,10 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
 
 ## OpenBao
 
-- [ ] **First bring-up.** After Argo syncs `openbao`, in your own SSH session:
-      `bootstrap/03-openbao.sh init`, store the three key shares in three
-      different places, then `unseal` and `configure`. Then prove the seal once:
-      delete `openbao-0`, confirm it comes back sealed, and unseal it again
-      with two of the shares.
+- [x] ~~First bring-up.~~ Done 2026-09-14: initialised, unsealed, configured.
+
+- [x] ~~Prove the seal once.~~ Done 2026-09-14: pod deleted, came back
+      sealed, unsealed again.
 
 - [ ] **Back it up off the box.** Losing OpenBao's volume loses every
       credential. The chart ships a snapshot CronJob (`snapshotAgent`), but it
@@ -96,23 +95,6 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
       Progressing and **holds every later wave** until someone unseals it. That
       is right for services that need secrets, but not for `web`.
 
-- [ ] **The request split is manifest-correct but has never actually run.** The
-      `web` Rollout now weights `web-stable` / `web-canary` on the HTTPRoute
-      through the Gateway API plugin. Two things are unproven on this cluster:
-      that the plugin loads at all, and that Traefik honours `weight: 0` on a
-      backendRef the way Gateway API specifies (no traffic; an all-zero rule is a
-      503). Check on the first canary, while it sits at the pause:
-      ```sh
-      kubectl -n argo-rollouts logs deploy/argo-rollouts | grep -i gatewayapi
-      kubectl -n web get httproute web \
-        -o jsonpath='{.spec.rules[0].backendRefs[*].weight}{"\n"}'   # expect 50 50
-      # then, with this streaming, curl the site ~20 times and watch the split
-      kubectl -n web logs -l app=web --prefix --tail=0 -f
-      ```
-      If the weights never change, the plugin is missing and the canary silently
-      degraded to a pod-count split — the failure mode to recognise, because
-      everything else still reports Healthy.
-
 - [ ] **`hello-nginx-conf` is not hash-suffixed.** It is a plain ConfigMap
       inside `apps/hello/deployment.yaml`, not part of the
       `configMapGenerator`, so editing the nginx config will *not* roll the
@@ -127,27 +109,31 @@ Deferred deliberately, not forgotten. Ordered by when it starts to matter.
 
 ## Deferred by decision, 2026-09-11
 
-- [ ] **Cluster topology: revisit when the first stateful service lands.**
-      Reviewed at 8% CPU / 3% memory actual usage, where nearly all consumption
-      is the control plane running itself. Adding worker nodes was rejected:
-      capacity is not the constraint, and workers leave `etcd members: 1`
-      untouched, so they buy no resilience at all.
+- [x] **Cluster topology — DECIDED 2026-09-17, see
+      [ADR-015](../architecture/docs/adr/015-cluster-topology-three-servers-on-one-machine.md).**
+      The trigger named here was "the first stateful service"; PostgreSQL is it.
 
-      The thing that is genuinely weak is quorum of one and
-      `PodDisruptionBudgets defined: 0`. Fixing that means **three RKE2 server
-      VMs on this box via libvirt** — the original T630 design, at no extra
-      cost — not more machines. Capacity fits: 3 x 4 vCPU / 16 GiB = 48 GiB,
-      leaving ~14 GiB for the host. What does not fit is the second 24 GiB
-      stage cluster, and this box has half the T630's cores.
+      Three RKE2 **server** VMs via libvirt, left schedulable, no worker agents.
+      Measured rather than estimated: a control-plane node costs ~2.75 GiB
+      (`kube-apiserver` 1187 Mi dominates; etcd is 88 Mi), so the tax is ~11.75
+      GiB — **19%**, not the ~40% first guessed — leaving ~51 GiB against a
+      ~25 GiB core deployment.
 
-      Revisit at the first stateful service, because that is when RF=3, PDBs
-      and live drains stop being decoration.
+      Not yet executed. The runbook is the next artefact; the ADR deliberately
+      contains no commands.
 
-- [ ] **`local-path` is node-local.** Invisible on one node. The moment a
-      second node exists, a rescheduled pod cannot reach its volume. Decide
-      then between node affinity for stateful workloads or real replicated
-      storage — Longhorn on a single node is theatre, so it only becomes a real
-      option alongside the topology decision above.
+- [ ] **`local-path` is node-local — and ADR-015 makes this live.** With three
+      nodes a rescheduled pod can no longer reach its volume. Decided alongside
+      the topology: **stateful workloads keep their own per-instance volume and
+      stay pinned.** CloudNativePG works this way by design and recommends local
+      storage; Kafka behaves the same. **Longhorn is rejected** — replicating
+      three ways onto one RAID1 array is write amplification for no durability.
+
+      Still open: anything that expects a volume to follow a pod will break, and
+      there is **no `VolumeSnapshotClass`** in this cluster (the snapshot
+      controller runs, but `local-path` is not a CSI driver that supports them).
+      That removes volume-snapshot backups as an option and forces PostgreSQL's
+      PITR onto an object store — the next decision.
 
 ## Planned subdomains
 
