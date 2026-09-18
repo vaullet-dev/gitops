@@ -12,7 +12,7 @@ spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18.6
   primaryUpdateStrategy: unsupervised
-  enableSuperuserAccess: false
+  enableSuperuserAccess: true    # see money.yaml for why; the backup job needs it
 
   affinity:
     nodeSelector:

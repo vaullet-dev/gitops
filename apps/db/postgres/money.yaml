@@ -40,9 +40,17 @@ spec:
   imageName: ghcr.io/cloudnative-pg/postgresql:18.6
   primaryUpdateStrategy: unsupervised
 
-  # No postgres superuser password anywhere. CNPG operates through the instance
-  # manager, not through a shared superuser credential.
-  enableSuperuserAccess: false
+  # ON, deliberately, and it was off in the first draft. The backup CronJob dumps
+  # every database in this cluster, and the per-database owner roles have no
+  # password until OpenBao supplies one -- so without this there is no identity
+  # able to read them all. `pg_dumpall --globals-only` also needs superuser to
+  # include role definitions; a lesser role writes a globals file that silently
+  # omits them, which you find out during a restore.
+  #
+  # The credential is generated and rotated by CloudNativePG into the Secret
+  # <cluster>-superuser. It never appears in git. Narrow it to a dedicated
+  # pg_read_all_data role once OpenBao can supply that role's password.
+  enableSuperuserAccess: true
 
   affinity:
     nodeSelector:
