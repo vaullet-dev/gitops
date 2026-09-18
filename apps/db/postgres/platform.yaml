@@ -45,7 +45,13 @@ spec:
       - name: support
         ensure: present
         login: true
-        comment: owner of support_db; password supplied by ESO at service onboarding
+        comment: owner of support_db
+        # Sourced from OpenBao via ESO -- see credentials.yaml. Until the
+        # vault is unsealed and onboarded this Secret does not exist, and
+        # CloudNativePG reports the role unreconciled rather than failing
+        # the cluster.
+        passwordSecret:
+          name: support-db-credentials
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
