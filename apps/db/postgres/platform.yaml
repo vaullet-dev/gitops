@@ -1,0 +1,59 @@
+# Identity and the supporting services. Independent of money -- restoring
+# auth_db to an earlier point is coherent on its own, which is exactly why it
+# does not belong in the money cluster.
+#
+# This is the cluster wallet-auth-service needs first: auth_db holds the account
+# anchor from ADR-014.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: platform
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: false
+
+  affinity:
+    nodeSelector:
+      kubernetes.io/hostname: k8s-2
+
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits:   { memory: 1Gi }
+
+  postgresql:
+    parameters:
+      shared_buffers: "256MB"
+      max_connections: "100"
+
+  bootstrap:
+    initdb:
+      database: auth_db
+      owner: auth
+      encoding: UTF8
+      localeProvider: builtin
+      builtinLocale: C.UTF-8
+      dataChecksums: true
+
+  managed:
+    roles:
+      - name: support
+        ensure: present
+        login: true
+        comment: owner of support_db; password supplied by ESO at service onboarding
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: support
+spec:
+  name: support_db
+  owner: support
+  cluster:
+    name: platform
+  databaseReclaimPolicy: retain

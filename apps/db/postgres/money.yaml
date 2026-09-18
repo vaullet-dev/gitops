@@ -1,0 +1,97 @@
+# The ledger and the transaction lifecycle. One restore unit: rewinding one of
+# these without the other leaves them disagreeing about money that exists.
+#
+# Decisions that apply to all three clusters, stated once here:
+#
+#   instances: 1     Deliberate. CloudNativePG scales by changing this number --
+#                    going to 3 later makes standbys with pg_basebackup, it is
+#                    not a redesign. The cost accepted today is that draining or
+#                    rebooting this node is a database outage.
+#
+#   imageName 18.6   Matches the PostgreSQL that wallet-auth-service's
+#                    V1__identity.sql was generated and approved against
+#                    (Flyway checksum -413149361). A major-version mismatch
+#                    would not fail the migration, it would change the schema
+#                    docs that approval was given on.
+#
+#   dataChecksums    ON, and it cannot be turned on later without rewriting
+#                    every page offline. Three VMs share one RAID1 array; this
+#                    is what turns silent corruption into a loud error.
+#
+#   localeProvider   builtin/C.UTF-8 rather than glibc. THIS IS IRREVERSIBLE
+#                    without a dump and restore. glibc collation changes between
+#                    distro releases, and when it does, every text index built
+#                    under the old rules is silently wrong -- a real and
+#                    well-documented way to corrupt a database by upgrading the
+#                    base image. The builtin provider is byte-order, defined by
+#                    PostgreSQL itself, and never changes. The trade: ORDER BY on
+#                    text is byte-order, so anything user-facing that needs
+#                    natural language ordering must say COLLATE explicitly.
+#
+#   nodeSelector     local-path binds a volume to whichever node the pod first
+#                    lands on, permanently. Choosing here beats discovering it
+#                    later from a PV's nodeAffinity.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: money
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6
+  primaryUpdateStrategy: unsupervised
+
+  # No postgres superuser password anywhere. CNPG operates through the instance
+  # manager, not through a shared superuser credential.
+  enableSuperuserAccess: false
+
+  affinity:
+    nodeSelector:
+      kubernetes.io/hostname: k8s-1
+
+  storage:
+    storageClass: local-path
+    size: 20Gi
+
+  resources:
+    requests: { cpu: 250m, memory: 1Gi }
+    limits:   { memory: 2Gi }
+
+  postgresql:
+    parameters:
+      shared_buffers: "512MB"
+      max_connections: "100"
+      # The ledger waits for its WAL to reach disk. This is the setting that
+      # makes "committed" mean committed, and it is the whole point of ADR-004.
+      synchronous_commit: "on"
+
+  bootstrap:
+    initdb:
+      database: vaullet_db
+      owner: vaullet
+      encoding: UTF8
+      localeProvider: builtin
+      builtinLocale: C.UTF-8
+      dataChecksums: true
+
+  managed:
+    roles:
+      # Owner of transactions_db. No passwordSecret: CNPG then leaves the
+      # password unset, so the role exists and owns its schema but cannot log
+      # in. The password arrives from OpenBao via ESO when the service is wired,
+      # which is the only way ADR-003's "no credential in git" holds.
+      - name: transactions
+        ensure: present
+        login: true
+        comment: owner of transactions_db; password supplied by ESO at service onboarding
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: transactions
+spec:
+  name: transactions_db
+  owner: transactions
+  cluster:
+    name: money
+  # retain, not delete: removing this object must never drop the database.
+  databaseReclaimPolicy: retain

@@ -1,0 +1,34 @@
+# Wave 1. The PostgreSQL clusters themselves, after the operator (wave -1) and
+# after local-path (wave -1) has a StorageClass to bind against.
+#
+# Three clusters, not one and not seven. ADR-003 counts seven logical DATABASES
+# and was amended on 2026-09-17 to say they live in one server; that note did not
+# consider the restore boundary, which is what actually decides the grouping:
+#
+#   databases that must be restored to the SAME point in time belong together.
+#
+# Restoring vaullet_db to 09:00 while transactions_db stays at 11:00 leaves the
+# ledger and the transaction log disagreeing about money that exists, so those
+# two can never be restored independently -- isolating them from each other buys
+# nothing usable. auth_db has no such coupling.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/vaullet-dev/gitops.git
+    targetRevision: main
+    path: apps/db/postgres
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: postgres
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ CreateNamespace=true ]

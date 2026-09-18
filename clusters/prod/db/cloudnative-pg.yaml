@@ -1,0 +1,48 @@
+# Wave -1. CloudNativePG, the PostgreSQL operator. Installed before the Cluster
+# objects in apps/postgres (wave 1), which are instances of the CRDs it ships.
+#
+# An operator rather than a StatefulSet: failover, switchover, backup, restore
+# and minor-version upgrades are all things somebody would otherwise have to
+# script and then be on call for. ADR-015 also names CloudNativePG specifically,
+# because it gives each instance its OWN volume rather than expecting one that
+# follows the pod -- which is the only shape that works on `local-path`.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudnative-pg
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: platform
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    targetRevision: 0.29.0        # operator 1.30.0
+    helm:
+      values: |
+        crds:
+          create: true
+
+        replicaCount: 1
+
+        resources:
+          requests: { cpu: 50m, memory: 128Mi }
+          limits:   { memory: 256Mi }
+
+        # No Prometheus in this cluster yet. The operator still exports metrics;
+        # nothing scrapes them. Turn this on with the monitoring stack, not before,
+        # or Argo reports a PodMonitor whose CRD does not exist.
+        monitoring:
+          podMonitorEnabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # the Cluster CRD alone is 469 KB, far past the
+                               # 262144-byte last-applied-configuration annotation
