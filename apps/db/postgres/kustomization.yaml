@@ -5,3 +5,4 @@ resources:
   - money.yaml
   - platform.yaml
   - analytics.yaml
+  - backup.yaml

@@ -1,0 +1,147 @@
+# Logical backups. ADR-003, amended 2026-09-17: continuous WAL archiving and
+# PITR need an object store, there is none on this machine and ADR-015 admits no
+# spend, so the reference cluster dumps on a schedule instead. RPO is therefore
+# THE DUMP INTERVAL, not zero. This recovers a bad migration or a wrong WHERE.
+# It does NOT recover the loss of the host: the dumps sit on the same RAID1
+# array as the databases.
+#
+# CloudNativePG's own ScheduledBackup is not usable here -- both its methods need
+# infrastructure this cluster lacks. barmanObjectStore needs object storage;
+# volumeSnapshot needs a VolumeSnapshotClass, and `local-path` is not a CSI
+# driver that provides one (`kubectl get volumesnapshotclass` is empty).
+#
+# One container, the SERVER'S OWN IMAGE, connecting over TCP:
+#   * pg_dump is by construction the same build as the server it dumps. A
+#     version-skewed client is a classic way to write a dump that will not
+#     restore, and pinning the image to 18.6 makes that impossible rather than
+#     unlikely.
+#   * An earlier draft exec'd into the server pods with `kubectl` instead. That
+#     needed pods/exec RBAC, a ServiceAccount, a Role and a RoleBinding -- and it
+#     could not work at all, because registry.k8s.io/kubectl is DISTROLESS and
+#     has no /bin/sh to run the script with.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-backups
+spec:
+  accessModes: [ ReadWriteOnce ]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-backup
+spec:
+  # 02:30 UTC daily. This interval IS the RPO: a restore loses everything
+  # written since the last run. Shorten it once the ledger holds anything a
+  # person would miss.
+  schedule: "30 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600     # do not fire a missed run hours late
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          # local-path binds this PVC to whichever node runs the first pod, and
+          # every later run must then land on the same node. k8s-3 is chosen
+          # deliberately: it holds `analytics`, the least critical cluster, so
+          # losing that one VM does not take both the money database and every
+          # backup of it. Losing the HOST still loses both -- see the header.
+          nodeSelector:
+            kubernetes.io/hostname: k8s-3
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 26           # postgres, in the CloudNativePG image
+            fsGroup: 26             # so the PVC is writable without root
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: pg-backups
+          containers:
+            - name: dump
+              image: ghcr.io/cloudnative-pg/postgresql:18.6
+              imagePullPolicy: IfNotPresent
+              volumeMounts:
+                - { name: backups, mountPath: /backups }
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits:   { memory: 512Mi }
+              env:
+                # Generated and rotated by CloudNativePG; never in git.
+                - name: MONEY_PW
+                  valueFrom: { secretKeyRef: { name: money-superuser,     key: password } }
+                - name: PLATFORM_PW
+                  valueFrom: { secretKeyRef: { name: platform-superuser,  key: password } }
+                - name: ANALYTICS_PW
+                  valueFrom: { secretKeyRef: { name: analytics-superuser, key: password } }
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -uo pipefail
+                  RETAIN_DAYS=14
+                  TS=$(date -u +%Y%m%dT%H%M%SZ)
+                  FAILED=0
+
+                  for C in money platform analytics; do
+                    case "$C" in
+                      money)     PW="$MONEY_PW" ;;
+                      platform)  PW="$PLATFORM_PW" ;;
+                      analytics) PW="$ANALYTICS_PW" ;;
+                    esac
+                    # -rw is the Service that always points at the current primary.
+                    export PGHOST="${C}-rw" PGPORT=5432 PGUSER=postgres PGPASSWORD="$PW"
+                    OUT="/backups/$C"; mkdir -p "$OUT"
+                    echo "== $C"
+
+                    # Roles and tablespaces are cluster-wide and appear in NO
+                    # pg_dump. They are also declared in git (managed.roles), so
+                    # this is belt and braces rather than the only copy.
+                    if ! pg_dumpall --globals-only -f "$OUT/globals__${TS}.sql"; then
+                      echo "!! $C: globals failed"; FAILED=1; continue
+                    fi
+
+                    DBS=$(psql -At -d postgres -c \
+                      "select datname from pg_database where not datistemplate and datname <> 'postgres'")
+                    for DB in $DBS; do
+                      # -Fc: custom format. Compressed, and pg_restore can list it,
+                      # pull a single table out of it, or reorder the restore.
+                      if pg_dump -Fc -d "$DB" -f "$OUT/${DB}__${TS}.dump"; then
+                        echo "   $DB -> $(stat -c%s "$OUT/${DB}__${TS}.dump") bytes"
+                      else
+                        echo "!! $C/$DB: pg_dump failed"; FAILED=1
+                      fi
+                    done
+                  done
+
+                  # A dump nobody has parsed is not a backup. pg_restore -l reads
+                  # the table of contents, so a truncated or corrupt file is caught
+                  # on the day it is written, not during a restore under pressure.
+                  echo "== verifying"
+                  BAD=0
+                  while IFS= read -r f; do
+                    if pg_restore -l "$f" >/dev/null 2>&1; then echo "   ok  $f"
+                    else echo "!! BAD $f"; BAD=1; fi
+                  done < <(find /backups -name '*.dump' -type f)
+
+                  # Prune only after a clean verification: an old good dump beats
+                  # a new broken one.
+                  if [ "$BAD" = 0 ] && [ "$FAILED" = 0 ]; then
+                    echo "== pruning older than ${RETAIN_DAYS}d"
+                    find /backups -type f \( -name '*.dump' -o -name '*.sql' \) \
+                         -mtime +$RETAIN_DAYS -print -delete
+                  else
+                    echo "!! problems found; keeping everything"
+                  fi
+
+                  echo "== on disk"
+                  du -sh /backups/* 2>/dev/null
+                  df -h /backups | tail -1
+                  [ "$FAILED" = 0 ] && [ "$BAD" = 0 ]
