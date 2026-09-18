@@ -6,3 +6,4 @@ resources:
   - platform.yaml
   - analytics.yaml
   - backup.yaml
+  - credentials.yaml
