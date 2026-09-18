@@ -41,7 +41,13 @@ wait_for_pod() {
 # so it never appears in a process list or in `kubectl` arguments.
 as_root() {
   local token
-  read -rsp "root token: " token; echo
+  # < /dev/tty is load-bearing. Callers pass the script to run as a HEREDOC, which
+  # makes it this function's stdin -- so a bare `read` consumes the heredoc's first
+  # line as the token instead of waiting for the terminal. The symptom is every
+  # `bao` call returning 403 with no early abort, because the `set -eu` line was
+  # what got eaten. It also makes a non-interactive run fail loudly rather than
+  # authenticate with garbage.
+  read -rsp "root token: " token < /dev/tty; echo
   { printf 'export BAO_TOKEN=%q\n' "$token"; cat; } | kubectl -n "$NS" exec -i "$POD" -- sh -s
 }
 
