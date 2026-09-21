@@ -1,0 +1,42 @@
+# The OpenBao store for wallet-auth's credentials.
+#
+# It lives in gitops rather than in the service repository because it is
+# CLUSTER-scoped, and the `services` AppProject permits exactly one cluster-scoped
+# kind: Namespace. That boundary is deliberate (00-projects.yaml) -- a service
+# cannot grant itself access to a secret store.
+#
+# TWO namespaces are allowed to use it, and that is the interesting part:
+#
+#   wallet-auth  the migration Job, to CONNECT with the credential
+#   postgres     CloudNativePG, to SET the role's password to the same value
+#
+# One value, one path, two readers. The alternative -- storing the password under
+# kv/postgres/ as well -- would be two copies that drift. Granting the second
+# namespace here keeps the grant declarative and reviewable in git, rather than
+# hidden in an OpenBao policy nobody diffs.
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: openbao-wallet-auth
+spec:
+  conditions:
+    - namespaces: [ wallet-auth, postgres ]
+  provider:
+    vault:
+      server: https://openbao.openbao.svc:8200
+      path: kv
+      version: v2
+      # OpenBao serves a certificate from its own namespaced cert-manager CA, so
+      # the public trust store is no help here.
+      caProvider:
+        type: Secret
+        name: openbao-ca
+        namespace: openbao
+        key: ca.crt
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: wallet-auth        # created by: 03-openbao.sh onboard wallet-auth
+          serviceAccountRef:
+            name: secrets-reader
+            namespace: wallet-auth
