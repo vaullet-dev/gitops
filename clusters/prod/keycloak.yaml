@@ -89,6 +89,49 @@ spec:
           dbchecker:
             enabled: true
 
+          # Keycloak manages its own TABLES but will not create the SCHEMA they
+          # live in: with KC_DB_SCHEMA naming a schema that does not exist,
+          # Liquibase fails on first start with an error that reads like a
+          # permissions problem.
+          #
+          # An init container here, NOT an Argo PreSync hook. The first draft was a
+          # hook, and it deadlocked: PreSync runs before everything else in the
+          # sync, including the ExternalSecret that produces the very credential
+          # the Job needs, so the Job waited for a Secret whose producer was
+          # waiting for the Job. Inside the pod the ordering is guaranteed and the
+          # chart has already wired the database environment.
+          extraInitContainers: |
+            - name: create-schema
+              image: ghcr.io/cloudnative-pg/postgresql:18.6
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/bash","-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  export PGHOST="$KC_DB_URL_HOST" PGPORT="$KC_DB_URL_PORT"
+                  export PGDATABASE="$KC_DB_URL_DATABASE"
+                  export PGUSER="$KC_DB_USERNAME" PGPASSWORD="$KC_DB_PASSWORD"
+                  psql -v ON_ERROR_STOP=1 -c \
+                    "CREATE SCHEMA IF NOT EXISTS keycloak_schema AUTHORIZATION keycloak"
+                  echo "keycloak_schema present"
+              env:
+                - { name: KC_DB_URL_HOST,     value: platform-rw.postgres.svc }
+                - { name: KC_DB_URL_PORT,     value: "5432" }
+                - { name: KC_DB_URL_DATABASE, value: auth_db }
+                - { name: KC_DB_USERNAME,     value: keycloak }
+                - name: KC_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: keycloak-db, key: KC_DB_PASSWORD }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits:   { memory: 256Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 26
+                capabilities: { drop: [ ALL ] }
+
           health:
             enabled: true
 

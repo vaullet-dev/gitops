@@ -4,5 +4,4 @@ namespace: keycloak
 resources:
   - serviceaccount.yaml
   - externalsecrets.yaml
-  - schema-job.yaml
   - httproute.yaml
