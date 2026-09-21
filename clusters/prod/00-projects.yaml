@@ -25,6 +25,7 @@ spec:
     - https://charts.external-secrets.io
     - https://openbao.github.io/openbao-helm
     - https://cloudnative-pg.github.io/charts
+    - https://codecentric.github.io/helm-charts
   destinations:
     - server: https://kubernetes.default.svc
       namespace: '*'
