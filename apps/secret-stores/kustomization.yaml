@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# No `namespace:` here, deliberately. Everything in this directory is
+# CLUSTER-scoped, and kustomize cannot read a CRD's scope -- it would stamp a
+# namespace onto objects that must not have one.
+resources:
+  - wallet-auth.yaml

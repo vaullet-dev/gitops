@@ -52,6 +52,23 @@ spec:
         # the cluster.
         passwordSecret:
           name: support-db-credentials
+      # The identity that runs Flyway for wallet-auth-service, and the ONLY one
+      # with DDL rights on auth_db. The running service holds a different role
+      # with none, which is what makes "the application cannot drop a table" a
+      # property of what is mounted rather than a promise in a document.
+      #
+      # inRoles: [auth] rather than a bare GRANT, because `auth` owns auth_db and
+      # CloudNativePG can express membership declaratively while it cannot express
+      # an arbitrary GRANT. The cost is that objects Flyway creates are owned by
+      # auth_migrator, so the application role will need explicit grants when it
+      # lands -- noted here rather than discovered then.
+      - name: auth_migrator
+        ensure: present
+        login: true
+        inRoles: [ auth ]
+        comment: runs Flyway for wallet-auth-service; holds DDL on auth_db
+        passwordSecret:
+          name: auth-migrator-db-credentials
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
