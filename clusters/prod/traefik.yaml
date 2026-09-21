@@ -105,6 +105,32 @@ spec:
               certificateRefs:
                 - name: vaullet-dev-tls
 
+            # auth.vaullet.dev -- Keycloak. ADR-006 makes this an INTERFACE, not a
+            # routing choice: the issuer https://auth.<cluster>/realms/vaullet is
+            # written into every token's iss claim.
+            #
+            # A subdomain rather than vaullet.dev/auth, decided 2026-09-21. Under a
+            # path, Keycloak's session cookies become FIRST-PARTY for vaullet.dev --
+            # so an XSS in the web app is same-origin with the identity provider and
+            # can call it with the victim's session attached. Separate origin is the
+            # boundary every hosted IdP relies on. The cost is one DNS record and one
+            # SAN, once; the same-origin decision could not be undone without
+            # reissuing every token.
+            #
+            # Adding this listener adds a 4th SAN to vaullet-dev-tls. Until
+            # auth.vaullet.dev resolves, the HTTP-01 challenge for it cannot
+            # complete: the existing 3-SAN certificate keeps serving and the new
+            # Order stays pending. That is the seal working, not a failure.
+            auth:
+              port: 8443
+              protocol: HTTPS
+              hostname: auth.vaullet.dev
+              mode: Terminate
+              namespacePolicy:
+                from: All
+              certificateRefs:
+                - name: vaullet-dev-tls
+
         service:
           type: LoadBalancer     # klipper-lb binds this to the node IP
 

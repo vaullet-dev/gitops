@@ -1,0 +1,27 @@
+# Keycloak's OpenBao store. Two namespaces again, same reason as wallet-auth:
+#   keycloak  reads its admin and database credentials
+#   postgres  reads the database one, so CloudNativePG can set the role to it
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: openbao-keycloak
+spec:
+  conditions:
+    - namespaces: [ keycloak, postgres ]
+  provider:
+    vault:
+      server: https://openbao.openbao.svc:8200
+      path: kv
+      version: v2
+      caProvider:
+        type: Secret
+        name: openbao-ca
+        namespace: openbao
+        key: ca.crt
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: keycloak            # created by: 03-openbao.sh onboard keycloak
+          serviceAccountRef:
+            name: secrets-reader
+            namespace: keycloak

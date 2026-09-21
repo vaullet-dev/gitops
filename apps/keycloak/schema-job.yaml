@@ -1,0 +1,50 @@
+# Keycloak manages its own tables but will NOT create the schema they live in --
+# with KC_DB_SCHEMA set to a schema that does not exist, Liquibase fails on first
+# start with an error that reads like a permissions problem.
+#
+# A PreSync hook so it runs before the StatefulSet every time, and is a no-op
+# after the first. It uses Keycloak's own credential, which is a member of `auth`
+# (the owner of auth_db) and so may CREATE SCHEMA.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-schema
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 26
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: createschema
+          image: ghcr.io/cloudnative-pg/postgresql:18.6
+          env:
+            - name: PGHOST
+              value: platform-rw.postgres.svc
+            - name: PGDATABASE
+              value: auth_db
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: keycloak-db, key: KC_DB_USERNAME } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak-db, key: KC_DB_PASSWORD } }
+          command: ["/bin/bash","-c"]
+          args:
+            - |
+              set -euo pipefail
+              psql -v ON_ERROR_STOP=1 -c \
+                "CREATE SCHEMA IF NOT EXISTS keycloak_schema AUTHORIZATION keycloak"
+              echo "keycloak_schema present, owned by keycloak"
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ ALL ] }
