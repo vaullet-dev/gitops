@@ -1,0 +1,103 @@
+# Wave 2. Keycloak, the only signer in the platform (ADR-006). After the
+# databases (wave 1), because it needs auth_db and its own role's password.
+#
+# The codecentric keycloakx CHART running the OFFICIAL quay.io/keycloak/keycloak
+# image. There is no official Helm chart -- upstream ships the Operator and the
+# images only. Three options were weighed:
+#
+#   * codecentric keycloakx   chart 7.3.2 -> Keycloak 26.7.4. A pinned chart
+#     version in git, the same shape as Traefik, cert-manager, OpenBao and
+#     External Secrets. CHOSEN.
+#   * the official Operator   trails upstream (26.4.0), and adds ~10 CRDs and an
+#     operator pod to manage one replica on one machine. Its best feature,
+#     KeycloakRealmImport, is already spoken for: ADR-006 names keycloak-config-cli,
+#     which reconciles rather than importing once. REVISIT when this becomes
+#     multi-cluster -- upgrading several Keycloaks in step is what an operator is for.
+#   * bitnami/keycloak        REJECTED. Not on licence: Keycloak is Apache-2.0
+#     whoever packages it. On DISTRIBUTION -- Broadcom moved the catalog in
+#     August 2025, bitnami/keycloak now has ZERO tags, and the images the chart
+#     pins live in bitnamilegacy/, frozen at 26.3.3. Four unpatched minor
+#     versions behind, on an identity provider.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keycloak
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://codecentric.github.io/helm-charts
+      chart: keycloakx
+      targetRevision: 7.3.2          # Keycloak 26.7.4
+      helm:
+        values: |
+          image:
+            tag: "26.7.4"
+
+          # keycloakx ships no default command on purpose: how Keycloak starts is
+          # the deployment's decision. Without this the pod runs nothing.
+          command:
+            - "/opt/keycloak/bin/kc.sh"
+            - "start"
+            - "--http-enabled=true"
+            - "--http-port=8080"
+
+          extraEnv: |
+            - name: KC_DB
+              value: postgres
+            # No currentSchema in the URL: Keycloak takes the schema separately,
+            # and setting both makes the two disagree in ways that surface as
+            # Liquibase errors rather than configuration errors.
+            - name: KC_DB_URL
+              value: jdbc:postgresql://platform-rw.postgres.svc:5432/auth_db
+            - name: KC_DB_SCHEMA
+              value: keycloak_schema
+            # The full URL, because it IS the issuer. ADR-006 puts
+            # https://auth.<cluster>/realms/vaullet in every token's iss claim,
+            # so getting this wrong produces tokens no resource server accepts.
+            - name: KC_HOSTNAME
+              value: https://auth.vaullet.dev
+            # TLS terminates in Traefik, so Keycloak sees plain HTTP and must be
+            # told to trust the forwarded headers -- otherwise it builds redirect
+            # URLs with http:// and the login flow breaks in a browser.
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+
+          extraEnvFrom: |
+            - secretRef:
+                name: keycloak-db        # KC_DB_USERNAME / KC_DB_PASSWORD
+            - secretRef:
+                name: keycloak-admin     # KC_BOOTSTRAP_ADMIN_USERNAME / _PASSWORD
+
+          # Waits for the database before starting. Without it the first start
+          # races CloudNativePG setting the role's password.
+          dbchecker:
+            enabled: true
+
+          health:
+            enabled: true
+
+          # One replica. ADR-006's risk table asks for 2+ with a PDB; that is the
+          # production shape, and on one machine a second replica survives nothing.
+          # Stated rather than silently diverged from.
+          replicaCount: 1
+
+          resources:
+            requests: { cpu: 200m, memory: 768Mi }
+            limits:   { memory: 1536Mi }
+
+    - repoURL: https://github.com/vaullet-dev/gitops.git
+      targetRevision: main
+      path: apps/keycloak
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keycloak
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ CreateNamespace=true ]

@@ -69,6 +69,29 @@ spec:
         comment: runs Flyway for wallet-auth-service; holds DDL on auth_db
         passwordSecret:
           name: auth-migrator-db-credentials
+      # What the RUNNING auth service connects as. No inRoles, deliberately: it
+      # inherits nothing, and V2__grant_app_role.sql gives it SELECT/INSERT/UPDATE
+      # on one table and nothing else. Not even DELETE -- ADR-014 makes closure a
+      # status transition, so no code path should remove an account row.
+      - name: auth_app
+        ensure: present
+        login: true
+        comment: the running wallet-auth-service; no DDL, no DELETE
+        passwordSecret:
+          name: auth-app-db-credentials
+
+      # Keycloak owns keycloak_schema in this same database (ADR-003). It manages
+      # its own schema across upgrades, so it genuinely needs DDL -- hence
+      # membership of `auth`, which owns auth_db. It has no rights in
+      # identity_schema and wallet-auth-service has none in keycloak_schema; the
+      # boundary is ownership, not hope.
+      - name: keycloak
+        ensure: present
+        login: true
+        inRoles: [ auth ]
+        comment: Keycloak's own schema in auth_db (ADR-003)
+        passwordSecret:
+          name: keycloak-db-credentials
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
