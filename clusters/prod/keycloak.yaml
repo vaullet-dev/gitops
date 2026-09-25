@@ -46,14 +46,23 @@ spec:
             - "--http-enabled=true"
             - "--http-port=8080"
 
-          # THE CHART DEFAULTS THIS TO /auth. Left alone, the issuer becomes
-          # https://auth.vaullet.dev/auth/realms/vaullet -- but ADR-006 fixes it as
-          # https://auth.<cluster>/realms/vaullet, and that string is written into
-          # every token's `iss` claim and every resource server's validation.
-          # Shipping it wrong produces a Keycloak that looks fine and mints tokens
-          # nothing accepts; correcting it later invalidates every token issued.
+          # Keycloak lives under /auth on vaullet.dev -- path-based routing, with
+          # /auth reserved for Keycloak and backend services under /api/<service>.
+          # This is also the chart default; it is written out because it is an
+          # interface, not a routing detail: together with KC_HOSTNAME below it
+          # makes the issuer
+          #     https://vaullet.dev/auth/realms/vaullet
+          # and that string is in every token's `iss` claim and in every resource
+          # server's OAUTH2_ISSUER_URI. Change one without the other and Keycloak
+          # looks healthy while minting tokens nothing accepts.
+          #
+          # The chart derives KC_HTTP_RELATIVE_PATH and the probe paths
+          # (/auth/health/*, management port 9000) from this one value.
+          #
+          # Supersedes ADR-006's https://auth.<cluster>/realms/vaullet, decided
+          # 2026-09-25.
           http:
-            relativePath: "/"
+            relativePath: "/auth"
 
           # The chart's own block, not extraEnv: dbchecker validates THIS and
           # refuses to render without database.hostname, while Keycloak reads the
@@ -77,8 +86,11 @@ spec:
           extraEnv: |
             - name: KC_DB_SCHEMA
               value: keycloak_schema
+            # A full URL, path included: Keycloak builds every front-channel URL
+            # (issuer, login redirects, admin console) from it. The path must
+            # match http.relativePath above.
             - name: KC_HOSTNAME
-              value: https://auth.vaullet.dev
+              value: https://vaullet.dev/auth
 
           extraEnvFrom: |
             - secretRef:

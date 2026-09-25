@@ -1,11 +1,9 @@
 # Wave 2, with the other services: after the operators (-1), the databases (1),
 # and therefore after auth_db exists and its migrator role has a password.
 #
-# v0 ships the migration Job and nothing that listens on a port. application.yaml
-# declares the JWT issuer with no default, so an unset OAUTH2_ISSUER_URI means no
-# JwtDecoder and the context refuses to start rather than serving unauthenticated
-# -- and Keycloak is not deployed. The Deployment, Service and HTTPRoute land in
-# the service repository when it is.
+# The service repository ships the migration Job, the Deployment, its Service and
+# the HTTPRoute that serves it at vaullet.dev/api/auth. Its OAUTH2_ISSUER_URI must
+# match Keycloak's issuer, https://vaullet.dev/auth/realms/vaullet (keycloak.yaml).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

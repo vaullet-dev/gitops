@@ -1,28 +1,32 @@
-# auth.vaullet.dev. ADR-006 fixes the issuer as https://auth.<cluster>/realms/vaullet,
-# so this hostname appears inside every token's `iss` claim and in every resource
-# server's validation config -- it is an interface, not a routing choice.
+# vaullet.dev/auth -> Keycloak. Path-based routing on the one public hostname:
+# /auth is Keycloak's, backend services live under /api/<service>.
+#
+# NO prefix rewrite, unlike the services: Keycloak itself serves under /auth
+# (http.relativePath in clusters/prod/keycloak.yaml), so the path arrives as-is.
+#
+#   https://vaullet.dev/auth/realms/vaullet/.well-known/openid-configuration
+#   https://vaullet.dev/auth/admin/
+#
+# Precedence: web's route on vaullet.dev is effectively PathPrefix "/", and the
+# longer prefix wins, so /auth lands here. PathPrefix matches whole path elements:
+# /authx still goes to the site, and /api/auth is a different prefix entirely.
+#
+# Plain HTTP needs nothing here: web-https-redirect already sends every path on
+# vaullet.dev:80 to https.
+#
+# auth.vaullet.dev is no longer routed. Its Gateway listener (traefik.yaml) and DNS
+# record are left in place for now; removing the listener drops a SAN from the
+# shared certificate, which is a reissue -- do that as its own change.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: keycloak
 spec:
   parentRefs:
-    - { name: vaullet, namespace: traefik, kind: Gateway, sectionName: auth }
-  hostnames: [ auth.vaullet.dev ]
+    - { name: vaullet, namespace: traefik, kind: Gateway, sectionName: websecure }
+  hostnames: [ vaullet.dev ]
   rules:
-    - backendRefs:
+    - matches:
+        - path: { type: PathPrefix, value: /auth }
+      backendRefs:
         - { name: keycloak-keycloakx-http, port: 80 }
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: keycloak-https-redirect
-spec:
-  parentRefs:
-    - { name: vaullet, namespace: traefik, kind: Gateway, sectionName: web }
-  hostnames: [ auth.vaullet.dev ]
-  rules:
-    - matches: [ { path: { type: PathPrefix, value: / } } ]
-      filters:
-        - type: RequestRedirect
-          requestRedirect: { scheme: https, statusCode: 301 }
