@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: keycloak
+resources:
+  - externalsecret.yaml
+  - job.yaml
+
+# One ConfigMap holding every realm file. The hash suffix means an edited file produces a new
+# ConfigMap name, and the Job (recreated on every sync) mounts the new one.
+#
+# Files are imported in name order, so the numeric prefix is the dependency order: roles exist
+# before any user references them.
+#
+# 20-vaullet-test-users.yaml is DEMO ONLY. A customer cluster drops that one line.
+configMapGenerator:
+  - name: keycloak-realm-config
+    files:
+      - realm/10-vaullet-roles.yaml
+      - realm/20-vaullet-test-users.yaml

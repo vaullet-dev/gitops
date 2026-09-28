@@ -1,0 +1,93 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# DEMO ONLY: one test user per ADR-006 role, for exercising the APIs role by role (the Bruno
+# collection logs in as any of them). A customer cluster must not ship this file; drop it from
+# kustomization.yaml.
+#
+# All six share one password: OpenBao kv/keycloak/test-users, synced into the keycloak-test-users
+# Secret and substituted below as $(env:TEST_USERS_PASSWORD). It is set on every sync, so rotating
+# it in OpenBao rotates it here.
+#
+# firstName, lastName and a verified email are filled in because Keycloak 26's user profile would
+# otherwise stop the first login with an "update your account" form.
+#
+# In realm `vaullet`, not in the separate `vaullet-admin` realm ADR-006 puts staff in: wallet-auth-
+# service trusts exactly one issuer today, https://vaullet.dev/auth/realms/vaullet. The five staff
+# users move when that realm, and a second trusted issuer, exist.
+#
+# Only test-end-user holds a wallet, so only it has an account row in auth_db (seeded by
+# wallet-auth-service, external_ref = this username). Staff administer accounts; they own none.
+realm: vaullet
+users:
+  - username: test-end-user
+    enabled: true
+    email: test-end-user@test.vaullet.dev
+    emailVerified: true
+    firstName: Test
+    lastName: End User
+    credentials:
+      - type: password
+        value: "$(env:TEST_USERS_PASSWORD)"
+        temporary: false
+    realmRoles:
+      - END_USER
+  - username: test-support-agent
+    enabled: true
+    email: test-support-agent@test.vaullet.dev
+    emailVerified: true
+    firstName: Test
+    lastName: Support Agent
+    credentials:
+      - type: password
+        value: "$(env:TEST_USERS_PASSWORD)"
+        temporary: false
+    realmRoles:
+      - SUPPORT_AGENT
+  - username: test-fraud-reviewer
+    enabled: true
+    email: test-fraud-reviewer@test.vaullet.dev
+    emailVerified: true
+    firstName: Test
+    lastName: Fraud Reviewer
+    credentials:
+      - type: password
+        value: "$(env:TEST_USERS_PASSWORD)"
+        temporary: false
+    realmRoles:
+      - FRAUD_REVIEWER
+  - username: test-finance
+    enabled: true
+    email: test-finance@test.vaullet.dev
+    emailVerified: true
+    firstName: Test
+    lastName: Finance
+    credentials:
+      - type: password
+        value: "$(env:TEST_USERS_PASSWORD)"
+        temporary: false
+    realmRoles:
+      - FINANCE
+  - username: test-config-admin
+    enabled: true
+    email: test-config-admin@test.vaullet.dev
+    emailVerified: true
+    firstName: Test
+    lastName: Config Admin
+    credentials:
+      - type: password
+        value: "$(env:TEST_USERS_PASSWORD)"
+        temporary: false
+    realmRoles:
+      - CONFIG_ADMIN
+  - username: test-super-admin
+    enabled: true
+    email: test-super-admin@test.vaullet.dev
+    emailVerified: true
+    firstName: Test
+    lastName: Super Admin
+    credentials:
+      - type: password
+        value: "$(env:TEST_USERS_PASSWORD)"
+        temporary: false
+    realmRoles:
+      - SUPER_ADMIN

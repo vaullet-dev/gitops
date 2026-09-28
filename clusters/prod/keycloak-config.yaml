@@ -1,0 +1,28 @@
+# Wave 3, after Keycloak (wave 2). Realm configuration as code, per ADR-006 "Realm configuration
+# is code": keycloak-config-cli applies apps/keycloak-config/realm/*.yaml to the running Keycloak
+# on every sync of this Application.
+#
+# A separate Application from `keycloak`, on purpose. The import is a PostSync hook that needs a
+# secret from OpenBao and a reachable Keycloak; if either is missing, only this Application goes
+# red. Keycloak itself keeps syncing and serving, and its own sync is never held open by a hook
+# that is waiting on something else.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keycloak-config
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/vaullet-dev/gitops.git
+    targetRevision: main
+    path: apps/keycloak-config
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keycloak
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }

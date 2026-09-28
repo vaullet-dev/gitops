@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# Realm roles of realm `vaullet`: exactly the six in ADR-006 "Roles". Keycloak assigns them; the
+# services enforce what they mean, and separation of duties lives there, not here.
+#
+# Only `roles.realm` is declared in this file, so nothing else in the realm is touched by it.
+realm: vaullet
+roles:
+  realm:
+    - name: END_USER
+      description: Own wallet only
+    - name: SUPPORT_AGENT
+      description: Read transactions and balances; move no money
+    - name: FRAUD_REVIEWER
+      description: Review cases, freeze and unfreeze accounts
+    - name: FINANCE
+      description: Approve refunds and manual adjustments
+    - name: CONFIG_ADMIN
+      description: Limits, campaigns and module configuration
+    - name: SUPER_ADMIN
+      description: User and role administration
