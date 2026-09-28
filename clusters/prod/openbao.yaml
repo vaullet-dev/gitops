@@ -101,8 +101,10 @@ spec:
               requests: { cpu: 50m, memory: 128Mi }
               limits:   { memory: 512Mi }
 
-          # The UI is served on 8200 by the server itself. No extra Service,
-          # no HTTPRoute: reach it over an SSH tunnel.
+          # The UI is served on 8200 by the server itself, so the chart's extra UI
+          # Service stays off. Public access is https://bao.vaullet.dev, through
+          # oauth2-proxy (apps/openbao-ui, a separate Application); the SSH tunnel
+          # in README.md still works and is the break-glass path.
           ui:
             enabled: false
 

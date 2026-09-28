@@ -1,0 +1,25 @@
+# Wave 1: after OpenBao (0) and the secret stores (-1). https://bao.vaullet.dev, the OpenBao UI
+# behind a GitHub login.
+#
+# A separate Application from `openbao`: that one is Progressing whenever the vault is sealed,
+# and the proxy in front of the UI should neither wait on the seal nor hold its sync open.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao-ui
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/vaullet-dev/gitops.git
+    targetRevision: main
+    path: apps/openbao-ui
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openbao
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
