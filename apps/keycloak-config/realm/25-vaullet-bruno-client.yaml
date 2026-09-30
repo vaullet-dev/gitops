@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# DEMO ONLY: the client that Bruno and curl use to log in as the test users in
+# 20-vaullet-test-users.yaml. A customer cluster must not ship this file. Drop it from
+# kustomization.yaml along with 20-.
+#
+# Public client, password grant only (direct access grants). The token endpoint takes a username
+# and password and returns that user's token:
+#
+#   curl https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/token \
+#     -d grant_type=password -d client_id=bruno -d username=test-super-admin \
+#     --data-urlencode password=...
+#
+# That turns a role-by-role API test into a three-field form. It is also why this client must never
+# leave a demo cluster: anything holding a password skips the login page, and everything the
+# browser flow would add.
+#
+# Both identity scopes are DEFAULT scopes here, so every token from this client carries them without
+# a `scope` parameter. That is safe only because wallet-auth-service also checks the realm role
+# (AccountAccess). test-end-user gets both scopes through this client and is still refused, which
+# is the case #15 closed.
+#
+# The default list names Keycloak's own six as well. When a client names either list, Keycloak
+# removes every scope the lists do not name (RepresentationToModel.updateClientScopes). Naming only
+# the identity scopes would drop `roles`, and realm_access.roles with it, and every call would then
+# fail on the role instead.
+realm: vaullet
+clients:
+  - clientId: bruno
+    name: Bruno (demo)
+    description: DEMO ONLY. Password-grant logins as the test users, for the Bruno collection and curl.
+    enabled: true
+    protocol: openid-connect
+    publicClient: true
+    directAccessGrantsEnabled: true
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    serviceAccountsEnabled: false
+    frontchannelLogout: false
+    # Every realm role the user holds reaches realm_access.roles. The services decide what each one means.
+    fullScopeAllowed: true
+    defaultClientScopes:
+      - basic
+      - acr
+      - profile
+      - email
+      - roles
+      - web-origins
+      - "identity:read"
+      - "identity:admin"
+    optionalClientScopes: []

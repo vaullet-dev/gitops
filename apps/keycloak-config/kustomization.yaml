@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: keycloak
+resources:
+  - externalsecret.yaml
+  - job.yaml
+
+# One ConfigMap holding every realm file. The hash suffix means an edited file produces a new
+# ConfigMap name, and the Job (recreated on every sync) mounts the new one.
+#
+# Files are imported in name order, so the numeric prefix is the dependency order: roles exist
+# before any user references them, and client scopes before any client lists them.
+#
+# 15-vaullet-client-scopes.yaml holds the scopes the services enforce. Every cluster keeps it.
+# 20-vaullet-test-users.yaml and 25-vaullet-bruno-client.yaml are DEMO ONLY. A customer cluster
+# drops those two lines.
+# 30-wallet-auth-service.yaml is what local identity mode needs (ADR-014): every cluster keeps it.
+configMapGenerator:
+  - name: keycloak-realm-config
+    files:
+      - realm/10-vaullet-roles.yaml
+      - realm/15-vaullet-client-scopes.yaml
+      - realm/20-vaullet-test-users.yaml
+      - realm/25-vaullet-bruno-client.yaml
+      - realm/30-wallet-auth-service.yaml

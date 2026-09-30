@@ -5,10 +5,12 @@
 # kind: Namespace. That boundary is deliberate (00-projects.yaml) -- a service
 # cannot grant itself access to a secret store.
 #
-# TWO namespaces are allowed to use it, and that is the interesting part:
+# THREE namespaces are allowed to use it, and that is the interesting part:
 #
-#   wallet-auth  the migration Job, to CONNECT with the credential
-#   postgres     CloudNativePG, to SET the role's password to the same value
+#   wallet-auth  the service and its migration Job, to CONNECT with the credentials
+#   postgres     CloudNativePG, to SET the roles' passwords to the same values
+#   keycloak     keycloak-config-cli, to SET client wallet-auth-service's secret to the
+#                value the service authenticates with (kv/wallet-auth/keycloak-client)
 #
 # One value, one path, two readers. The alternative -- storing the password under
 # kv/postgres/ as well -- would be two copies that drift. Granting the second
@@ -20,7 +22,7 @@ metadata:
   name: openbao-wallet-auth
 spec:
   conditions:
-    - namespaces: [ wallet-auth, postgres ]
+    - namespaces: [ wallet-auth, postgres, keycloak ]
   provider:
     vault:
       server: https://openbao.openbao.svc:8200

@@ -1,0 +1,96 @@
+# keycloak-config-cli: applies realm/*.yaml to the running Keycloak (ADR-006 "Realm configuration
+# is code"). Idempotent, so it runs on EVERY sync rather than once: the realm converges on git.
+#
+# A PostSync hook, not a plain Job. A Job's spec is immutable, so a plain Job could never pick up a
+# new ConfigMap; BeforeHookCreation deletes the previous run and starts a fresh one. PostSync also
+# means it only starts once the ExternalSecret above is healthy, i.e. once its secret exists.
+#
+# What it may change, and what it may not:
+#   * Only the resource TYPES a realm file declares are touched: today realm roles, users, client
+#     scopes, clients and the user profile. Identity providers, flows and the rest of the realm are
+#     left exactly as they are, including everything configured by hand in the admin console.
+#   * Roles, clients and client scopes are no-delete (IMPORT_MANAGED_*): taking one out of a file
+#     does not take it out of Keycloak. Deleting one is a decision, not a side effect of an edit.
+#   * The user profile is the exception: it is replaced whole, so 30-wallet-auth-service.yaml
+#     restates Keycloak's default attributes next to the one it adds.
+#   * Users are created and updated, never deleted. A user's realm roles are set to exactly the
+#     list in the file, so a test user cannot quietly accumulate roles.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-config-cli
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 2
+  # Bounds the whole run, pending time included: a missing Secret fails the Job visibly instead of
+  # leaving it waiting forever.
+  activeDeadlineSeconds: 600
+  template:
+    spec:
+      restartPolicy: Never
+      # Talks to Keycloak over HTTP, never to the Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true          # the image's own user, 65534
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - name: realm-config
+          configMap: { name: keycloak-realm-config }
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: keycloak-config-cli
+          # Built against Keycloak 26.5.5, the newest 26.x in the 6.5.1 release matrix; the admin
+          # API it drives is stable across 26.x, and the server here is 26.7.4. Pinned, never
+          # `latest` (ADR-010 §4). quay.io rather than Docker Hub: no anonymous pull limit.
+          image: quay.io/adorsys/keycloak-config-cli:6.5.1-26.5.5
+          imagePullPolicy: IfNotPresent
+          env:
+            # In-cluster, over the Service, rather than the public hostname: the import must not
+            # depend on DNS, HAProxy or the Gateway. /auth is Keycloak's http.relativePath.
+            # Tokens still carry the public issuer (KC_HOSTNAME), which is what the admin API checks.
+            - { name: KEYCLOAK_URL, value: "http://keycloak-keycloakx-http.keycloak.svc/auth" }
+            # The bootstrap admin, for now. It is the temporary admin Keycloak 26 warns about; when
+            # a permanent admin exists this becomes a master-realm client with client_credentials
+            # (KEYCLOAK_CLIENTID / KEYCLOAK_CLIENTSECRET / KEYCLOAK_GRANTTYPE).
+            - name: KEYCLOAK_USER
+              valueFrom: { secretKeyRef: { name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_USERNAME } }
+            - name: KEYCLOAK_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_PASSWORD } }
+            - { name: KEYCLOAK_AVAILABILITYCHECK_ENABLED, value: "true" }
+            - { name: KEYCLOAK_AVAILABILITYCHECK_TIMEOUT, value: "300s" }
+            - { name: IMPORT_FILES_LOCATIONS, value: "file:/config/*.yaml" }
+            # $(env:TEST_USERS_PASSWORD) in 20-vaullet-test-users.yaml; an undefined variable is a
+            # hard error, so a missing secret can never become an empty password.
+            - { name: IMPORT_VARSUBSTITUTION_ENABLED, value: "true" }
+            # The import cache skips a file whose text is unchanged. The password comes from the
+            # environment, not the file, so with the cache on a rotation in OpenBao would never land.
+            - { name: IMPORT_CACHE_ENABLED, value: "false" }
+            - { name: IMPORT_MANAGED_ROLE, value: "no-delete" }
+            # Clients are fully managed too: keycloak-config-cli deletes clients it created that a
+            # file no longer declares. no-delete, as for roles, so removing a file never removes a
+            # client a running service authenticates as.
+            - { name: IMPORT_MANAGED_CLIENT, value: "no-delete" }
+            # Client scopes as well, and the default is worse here: FULL deletes every client scope
+            # that is neither a realm default nor declared in the file being imported, whoever
+            # created it. It ignores remote state (6.5.1, ClientScopeImportService.doRemoveOrphan),
+            # so the first import of 15-vaullet-client-scopes.yaml would delete hand-made scopes too.
+            - { name: IMPORT_MANAGED_CLIENTSCOPE, value: "no-delete" }
+            - name: TEST_USERS_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak-test-users, key: TEST_USERS_PASSWORD } }
+            # $(env:WALLET_AUTH_CLIENT_SECRET) in 30-wallet-auth-service.yaml.
+            - name: WALLET_AUTH_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: wallet-auth-client, key: WALLET_AUTH_CLIENT_SECRET } }
+            - { name: JAVA_OPTS, value: "-XX:MaxRAMPercentage=60" }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { memory: 768Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ ALL ] }
+          volumeMounts:
+            - { name: realm-config, mountPath: /config, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
