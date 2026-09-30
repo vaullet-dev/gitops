@@ -4,16 +4,28 @@
 # Everything previously lived in Argo's built-in `default` project, which
 # permits any repo to deploy any kind into any namespace. That is fine for one
 # hello app and wrong for fourteen services, so the split is drawn now while it
-# costs nothing: platform may touch the cluster, services may not.
+# costs nothing.
+#
+# Three groups, one per layer. They are also how the Argo CD UI groups the
+# applications: pick one under Projects in the left panel, and the filter lands
+# in the URL, so /applications?proj=infra can be bookmarked.
+#
+#   infra     the cluster's plumbing, nothing Vaullet-specific: CRDs, ingress,
+#             certificates, storage, operators, Argo CD itself
+#   platform  the shared services the apps depend on: OpenBao, Postgres,
+#             Keycloak, and their configuration
+#   apps      Vaullet's own services
+#
+# infra and platform may touch the cluster; apps may not.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: platform
+  name: infra
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
 spec:
-  description: Cluster infrastructure — ingress, certs, storage, delivery
+  description: Cluster plumbing — CRDs, ingress, certificates, storage, operators, delivery
   # An explicit allow-list. A compromised or mistyped repoURL cannot introduce
   # a chart from somewhere nobody vetted.
   sourceRepos:
@@ -23,13 +35,11 @@ spec:
     - https://charts.jetstack.io
     - https://argoproj.github.io/argo-helm
     - https://charts.external-secrets.io
-    - https://openbao.github.io/openbao-helm
     - https://cloudnative-pg.github.io/charts
-    - https://codecentric.github.io/helm-charts
   destinations:
     - server: https://kubernetes.default.svc
       namespace: '*'
-  # Platform installs CRDs, ClusterIssuers, GatewayClasses, StorageClasses.
+  # Infra installs CRDs, ClusterIssuers, GatewayClasses, StorageClasses.
   clusterResourceWhitelist:
     - group: '*'
       kind: '*'
@@ -40,12 +50,39 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: services
+  name: platform
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
 spec:
-  description: Application workloads — the microservices and their routes
+  description: Shared services — OpenBao, Postgres, Keycloak and their configuration
+  sourceRepos:
+    - https://github.com/vaullet-dev/gitops.git
+    - https://openbao.github.io/openbao-helm
+    - https://codecentric.github.io/helm-charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: '*'
+  # Cluster-wide as well, for now: secret-stores creates ClusterSecretStores, and
+  # charts like OpenBao's bring cluster-scoped RBAC. Narrowing this to the kinds
+  # actually used is a separate change from the split.
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+---
+# Called `services` until 2026-09-30; renamed so the three groups read as layers.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: apps
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: Vaullet's own services and their routes
   sourceRepos:
     - https://github.com/vaullet-dev/*
   # Namespace globs, so a new service does not need this file edited, but a

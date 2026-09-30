@@ -1,7 +1,7 @@
 # The OpenBao store for wallet-auth's credentials.
 #
 # It lives in gitops rather than in the service repository because it is
-# CLUSTER-scoped, and the `services` AppProject permits exactly one cluster-scoped
+# CLUSTER-scoped, and the `apps` AppProject permits exactly one cluster-scoped
 # kind: Namespace. That boundary is deliberate (00-projects.yaml) -- a service
 # cannot grant itself access to a secret store.
 #

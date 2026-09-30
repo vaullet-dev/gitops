@@ -15,7 +15,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  project: platform
+  project: infra
   source:
     repoURL: https://traefik.github.io/charts
     chart: traefik

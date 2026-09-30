@@ -14,7 +14,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  project: platform
+  project: infra
   source:
     repoURL: https://github.com/vaullet-dev/gitops.git
     targetRevision: main
