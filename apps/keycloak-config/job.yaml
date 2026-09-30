@@ -6,11 +6,13 @@
 # means it only starts once the ExternalSecret above is healthy, i.e. once its secret exists.
 #
 # What it may change, and what it may not:
-#   * Only the resource TYPES a realm file declares are touched: today realm roles and users.
-#     Clients, client scopes, identity providers, flows and the rest of the realm are left exactly
-#     as they are, including everything configured by hand in the admin console.
-#   * Roles are no-delete (IMPORT_MANAGED_ROLE): taking a role out of the file does not take it out
-#     of Keycloak. Deleting a role is a decision, not a side effect of an edit.
+#   * Only the resource TYPES a realm file declares are touched: today realm roles, users, client
+#     scopes, clients and the user profile. Identity providers, flows and the rest of the realm are
+#     left exactly as they are, including everything configured by hand in the admin console.
+#   * Roles, clients and client scopes are no-delete (IMPORT_MANAGED_*): taking one out of a file
+#     does not take it out of Keycloak. Deleting one is a decision, not a side effect of an edit.
+#   * The user profile is the exception: it is replaced whole, so 30-wallet-auth-service.yaml
+#     restates Keycloak's default attributes next to the one it adds.
 #   * Users are created and updated, never deleted. A user's realm roles are set to exactly the
 #     list in the file, so a test user cannot quietly accumulate roles.
 apiVersion: batch/v1
@@ -67,8 +69,20 @@ spec:
             # environment, not the file, so with the cache on a rotation in OpenBao would never land.
             - { name: IMPORT_CACHE_ENABLED, value: "false" }
             - { name: IMPORT_MANAGED_ROLE, value: "no-delete" }
+            # Clients are fully managed too: keycloak-config-cli deletes clients it created that a
+            # file no longer declares. no-delete, as for roles, so removing a file never removes a
+            # client a running service authenticates as.
+            - { name: IMPORT_MANAGED_CLIENT, value: "no-delete" }
+            # Client scopes as well, and the default is worse here: FULL deletes every client scope
+            # that is neither a realm default nor declared in the file being imported, whoever
+            # created it. It ignores remote state (6.5.1, ClientScopeImportService.doRemoveOrphan),
+            # so the first import of 15-vaullet-client-scopes.yaml would delete hand-made scopes too.
+            - { name: IMPORT_MANAGED_CLIENTSCOPE, value: "no-delete" }
             - name: TEST_USERS_PASSWORD
               valueFrom: { secretKeyRef: { name: keycloak-test-users, key: TEST_USERS_PASSWORD } }
+            # $(env:WALLET_AUTH_CLIENT_SECRET) in 30-wallet-auth-service.yaml.
+            - name: WALLET_AUTH_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: wallet-auth-client, key: WALLET_AUTH_CLIENT_SECRET } }
             - { name: JAVA_OPTS, value: "-XX:MaxRAMPercentage=60" }
           resources:
             requests: { cpu: 100m, memory: 256Mi }

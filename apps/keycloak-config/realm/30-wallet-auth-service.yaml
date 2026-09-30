@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# What wallet-auth-service needs from realm `vaullet` to create end users itself (ADR-014,
+# wallet-auth-service #17):
+#
+#   * a confidential client whose service account can manage users, and nothing more;
+#   * `account_id` in the user profile, editable by admins only.
+#
+# The service checks the second before its first create and refuses to go on without it.
+realm: vaullet
+
+# keycloak-config-cli imports `userProfile` below only when this realm attribute is present.
+attributes:
+  userProfileEnabled: "true"
+
+# The whole user profile, not a patch: keycloak-config-cli replaces it. Keycloak 26's four default
+# attributes are restated exactly as it ships them, and account_id is added.
+userProfile:
+  attributes:
+    - name: username
+      displayName: "${username}"
+      permissions: { view: [admin, user], edit: [admin, user] }
+      validations:
+        length: { min: 3, max: 255 }
+        username-prohibited-characters: {}
+        up-username-not-idn-homograph: {}
+      multivalued: false
+    - name: email
+      displayName: "${email}"
+      required: { roles: [user] }
+      permissions: { view: [admin, user], edit: [admin, user] }
+      validations:
+        email: {}
+        length: { max: 255 }
+      multivalued: false
+    - name: firstName
+      displayName: "${firstName}"
+      required: { roles: [user] }
+      permissions: { view: [admin, user], edit: [admin, user] }
+      validations:
+        length: { max: 255 }
+        person-name-prohibited-characters: {}
+      multivalued: false
+    - name: lastName
+      displayName: "${lastName}"
+      required: { roles: [user] }
+      permissions: { view: [admin, user], edit: [admin, user] }
+      validations:
+        length: { max: 255 }
+        person-name-prohibited-characters: {}
+      multivalued: false
+    # Vaullet's id for the user, written once by wallet-auth-service when it creates the user; the
+    # anchor's primary key. Admin-only, and that is the point: ADR-006's protocol mapper puts it in
+    # every token and every service keys money on it. A user who could edit it could choose whose
+    # account their tokens name.
+    - name: account_id
+      displayName: Vaullet account
+      permissions: { view: [admin], edit: [admin] }
+      validations:
+        pattern:
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          error-message: account_id must be a UUID
+      multivalued: false
+  groups:
+    - name: user-metadata
+      displayHeader: User metadata
+      displayDescription: Attributes, which refer to user metadata
+
+clients:
+  - clientId: wallet-auth-service
+    name: wallet-auth-service
+    description: Auth service. Creates, changes and deletes end users through the Admin API (ADR-014).
+    enabled: true
+    protocol: openid-connect
+    publicClient: false
+    clientAuthenticatorType: client-secret
+    # OpenBao kv/wallet-auth/keycloak-client: the same value the service authenticates with.
+    secret: "$(env:WALLET_AUTH_CLIENT_SECRET)"
+    # Client credentials only. No browser flow and no password grant: nobody logs in as this client.
+    serviceAccountsEnabled: true
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    frontchannelLogout: false
+
+users:
+  # The client's service account, holding exactly what the service uses: manage-users to create,
+  # change and delete, view-users to read, view-realm to look up END_USER's id and read the user
+  # profile above. Not manage-realm: nothing the service does changes the realm, and a leaked secret
+  # should not be able to either.
+  - username: service-account-wallet-auth-service
+    enabled: true
+    serviceAccountClientId: wallet-auth-service
+    clientRoles:
+      realm-management:
+        - manage-users
+        - view-users
+        - view-realm

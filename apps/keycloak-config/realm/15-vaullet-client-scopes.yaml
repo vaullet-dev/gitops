@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# Client scopes of realm `vaullet`: one per scope a service enforces, so that a token can carry it.
+# Today these are wallet-auth-service's two:
+#
+#   identity:read    GET /v1/accounts/**
+#   identity:admin   POST, PATCH and DELETE on /v1/accounts/**
+#
+# Without them no real token carries either scope, and every rule in wallet-auth-service refuses
+# everyone, SUPER_ADMIN included (its README, "Still open"). A scope says what the client may ask
+# for, and the realm role in the same token says who is asking. The service checks both.
+#
+# ADR-008's scope table is meant to be the source for these, and it has no rows for them yet. Until
+# it does, this file is the record. When the rows land there, keep the names identical here.
+#
+# Only `clientScopes` is declared, so nothing else in the realm is touched. Which clients get these
+# scopes is up to each client (25-vaullet-bruno-client.yaml).
+#
+# job.yaml sets IMPORT_MANAGED_CLIENTSCOPE=no-delete, and this file is why. Without it,
+# keycloak-config-cli's default (FULL) would delete, on this file's first import, every client scope
+# in the realm that is neither a realm default nor listed here.
+realm: vaullet
+clientScopes:
+  - name: "identity:read"
+    description: Read accounts in wallet-auth-service (GET /v1/accounts/**)
+    protocol: openid-connect
+    attributes:
+      # The name lands in the token's `scope` claim, and Spring turns it into SCOPE_identity:read.
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+  - name: "identity:admin"
+    description: Create, change and close accounts in wallet-auth-service (POST, PATCH, DELETE)
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
