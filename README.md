@@ -83,15 +83,18 @@ CloudNativePG can — has to use an object store here instead.
 
 ## Project groups
 
-Applications are split across two Argo `AppProject`s rather than the built-in
-`default`, which permits any repo to deploy any kind into any namespace.
+Applications are split across three Argo `AppProject`s rather than the built-in
+`default`, which permits any repo to deploy any kind into any namespace. They are
+also how the Argo CD UI groups the applications: pick one under *Projects* in the
+left panel, and the filter goes into the URL (`/applications?proj=infra`).
 
 | Project | Holds | May create cluster-scoped objects |
 |---|---|---|
-| `platform` | crds, cert-manager, local-path, traefik, argo-rollouts | yes — CRDs, ClusterIssuers, GatewayClass, StorageClass |
-| `services` | web, and every `wallet-*` service to come | **no**, except `Namespace` |
+| `infra` | crds, cert-manager, traefik, local-path-provisioner, external-secrets, cloudnative-pg, argo-rollouts, argocd | yes — CRDs, ClusterIssuers, GatewayClass, StorageClass |
+| `platform` | openbao, openbao-ui, secret-stores, postgres, keycloak, keycloak-config | yes, for now — ClusterSecretStores, the charts' cluster RBAC |
+| `apps` | web, wallet-auth, and every `wallet-*` service to come | **no**, except `Namespace` |
 
-`services` is also restricted by source (`github.com/vaullet-dev/*`) and by
+`apps` (called `services` until 2026-09-30) is also restricted by source (`github.com/vaullet-dev/*`) and by
 destination namespace (`web`, `wallet-*`), so a service cannot deploy into
 `kube-system` or `traefik` even by accident.
 
@@ -206,7 +209,7 @@ spec:
             namespace: wallet-ledger
 ```
 
-The store is cluster-scoped, and the `services` project cannot create
+The store is cluster-scoped, and the `apps` project cannot create
 cluster-scoped objects. That is on purpose: a service cannot point itself at
 another service's secrets. The same service's database and roles will live
 here too.

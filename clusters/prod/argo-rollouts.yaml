@@ -22,7 +22,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  project: platform
+  project: infra
   source:
     repoURL: https://argoproj.github.io/argo-helm
     chart: argo-rollouts
