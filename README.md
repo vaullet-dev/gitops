@@ -275,13 +275,16 @@ whose networks work best.
 | Argo CD | `https://argo.vaullet.dev` | Argo CD login |
 | Kubernetes API (6443) | closed at the firewall | SSH only |
 | Traefik dashboard | not exposed | SSH tunnel |
-| OpenBao UI and API | not exposed | SSH tunnel, then an OpenBao token |
+| OpenBao UI and API | `https://bao.vaullet.dev` | GitHub login (one allowed account, oauth2-proxy), then an OpenBao token |
 | Argo Rollouts UI | **not deployed** | see TODO.md |
 
-Argo CD is the only administrative UI on the internet, and only because it
-actually authenticates. Anyone who logs in can change what the cluster runs, so
-the admin password matters and SSO is worth it as soon as more than one person
-needs access.
+Argo CD and OpenBao are the only administrative UIs on the internet, and only because they
+actually authenticate. Anyone who logs in to Argo CD can change what the cluster runs, so the
+admin password matters and SSO is worth it as soon as more than one person needs access.
+
+OpenBao sits behind two locks in series: oauth2-proxy lets through one GitHub account and nothing
+else, and OpenBao then asks for its own token. The SSH tunnel below still works and is the
+break-glass path, for when GitHub or the proxy is down.
 
 The Argo Rollouts dashboard is **switched off**, not merely unexposed:
 CVE-2026-82277 (CVSS 9.8) means it serves `PromoteRollout`, `AbortRollout` and

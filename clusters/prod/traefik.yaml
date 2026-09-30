@@ -130,6 +130,18 @@ spec:
                 from: All
               certificateRefs:
                 - name: vaullet-dev-tls
+            # OpenBao's UI, behind oauth2-proxy (apps/openbao-ui). Its OWN certificate, not a
+            # SAN on vaullet-dev-tls: if this name's HTTP-01 challenge ever fails, only this
+            # listener goes without a cert; the site's certificate is never held up by it.
+            bao:
+              port: 8443
+              protocol: HTTPS
+              hostname: bao.vaullet.dev
+              mode: Terminate
+              namespacePolicy:
+                from: All
+              certificateRefs:
+                - name: bao-vaullet-dev-tls
 
         service:
           type: LoadBalancer     # klipper-lb binds this to the node IP

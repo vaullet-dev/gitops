@@ -4,16 +4,21 @@
 # 20-vaullet-test-users.yaml. A customer cluster must not ship this file. Drop it from
 # kustomization.yaml along with 20-.
 #
-# Public client, password grant only (direct access grants). The token endpoint takes a username
-# and password and returns that user's token:
+# Public client, with two ways in:
 #
-#   curl https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/token \
-#     -d grant_type=password -d client_id=bruno -d username=test-super-admin \
-#     --data-urlencode password=...
+#   * The browser login, authorization code with PKCE. This is what the Bruno app uses (OAuth2 at
+#     collection level): it opens Keycloak's login page and catches the redirect to
+#     https://oauth.usebruno.com/callback, the only redirect URI this client accepts.
+#   * The password grant (direct access grants), for curl and scripts. The token endpoint takes a
+#     username and password and returns that user's token:
 #
-# That turns a role-by-role API test into a three-field form. It is also why this client must never
-# leave a demo cluster: anything holding a password skips the login page, and everything the
-# browser flow would add.
+#       curl https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/token \
+#         -d grant_type=password -d client_id=bruno -d username=test-super-admin \
+#         --data-urlencode password=...
+#
+# The password grant turns a role-by-role API test into a three-field form. It is also why this
+# client must never leave a demo cluster: anything holding a password skips the login page, and
+# everything the browser flow would add.
 #
 # Both identity scopes are DEFAULT scopes here, so every token from this client carries them without
 # a `scope` parameter. That is safe only because wallet-auth-service also checks the realm role
@@ -28,12 +33,20 @@ realm: vaullet
 clients:
   - clientId: bruno
     name: Bruno (demo)
-    description: DEMO ONLY. Password-grant logins as the test users, for the Bruno collection and curl.
+    description: DEMO ONLY. Test-user logins for the Bruno app (auth code + PKCE) and curl (password grant).
     enabled: true
     protocol: openid-connect
     publicClient: true
     directAccessGrantsEnabled: true
-    standardFlowEnabled: false
+    standardFlowEnabled: true
+    # Exactly Bruno's callback. The list is replaced, not merged, so the broad https://vaullet.dev/*
+    # the hand-made client carried goes with it: that one let a login finish on any page of the site.
+    redirectUris:
+      - https://oauth.usebruno.com/callback
+    attributes:
+      # A public client has no secret, so the PKCE verifier is what stops an intercepted code from
+      # being exchanged for a token. Required, and only S256.
+      pkce.code.challenge.method: S256
     implicitFlowEnabled: false
     serviceAccountsEnabled: false
     frontchannelLogout: false

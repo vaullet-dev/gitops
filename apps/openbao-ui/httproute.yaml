@@ -1,0 +1,29 @@
+# bao.vaullet.dev -> oauth2-proxy -> OpenBao. Its own hostname rather than a path on vaullet.dev,
+# for two reasons: the OpenBao UI cannot be served under a path prefix (it expects /ui and /v1 at
+# the root of its host), and it keeps its session token in browser storage, which must not share
+# an origin with anything else.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openbao-ui
+spec:
+  parentRefs:
+    - { name: vaullet, namespace: traefik, kind: Gateway, sectionName: bao }
+  hostnames: [ bao.vaullet.dev ]
+  rules:
+    - backendRefs:
+        - { name: oauth2-proxy, port: 80 }
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openbao-ui-https-redirect
+spec:
+  parentRefs:
+    - { name: vaullet, namespace: traefik, kind: Gateway, sectionName: web }
+  hostnames: [ bao.vaullet.dev ]
+  rules:
+    - matches: [ { path: { type: PathPrefix, value: / } } ]
+      filters:
+        - type: RequestRedirect
+          requestRedirect: { scheme: https, statusCode: 301 }

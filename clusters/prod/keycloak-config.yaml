@@ -26,3 +26,12 @@ spec:
     namespace: keycloak
   syncPolicy:
     automated: { prune: true, selfHeal: true }
+    # Retry without limit, backing off to one attempt every 5 minutes. The import is a PostSync hook,
+    # so it only runs at the end of a sync that succeeded, and the first sync after a merge can fail
+    # for reasons that fix themselves a few minutes later: a secret not yet in OpenBao, or a store
+    # condition secret-stores has not applied yet. Argo CD does not start another sync while the app
+    # reports Synced, so without retries that import is simply lost. On 2026-09-30 the default five
+    # attempts ran out within five minutes, and the realm waited for a sync by hand.
+    retry:
+      limit: -1
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

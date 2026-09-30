@@ -1,0 +1,83 @@
+# oauth2-proxy as a reverse proxy in front of OpenBao: every request to bao.vaullet.dev needs a
+# GitHub session for exactly the account listed in --github-user, or it never reaches OpenBao.
+# With --github-user and no org, repo or team configured, any other GitHub account is refused
+# ("missing github user"), so this is an allowlist of one, not "anyone with GitHub".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy
+  labels: { app: oauth2-proxy }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: { app: oauth2-proxy }
+  template:
+    metadata:
+      labels: { app: oauth2-proxy }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true          # distroless :nonroot, uid 65532
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        # OpenBao's certificate is from the private CA (apps/openbao/tls.yaml). oauth2-proxy has no
+        # "upstream CA" flag, so the CA is added to Go's trust store instead: SSL_CERT_DIR below
+        # lists the image's own bundle directory AND this one. Nothing is skipped, nothing is
+        # insecure; the public roots GitHub needs are still there.
+        - name: openbao-ca
+          secret:
+            secretName: openbao-ca
+            items:
+              - { key: ca.crt, path: openbao-ca.crt }
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4
+          imagePullPolicy: IfNotPresent
+          args:
+            - --provider=github
+            - --github-user=predrag-arsic
+            # Required by oauth2-proxy; the username allowlist above is the actual restriction.
+            - --email-domain=*
+            - --upstream=https://openbao.openbao.svc:8200/
+            - --http-address=0.0.0.0:4180
+            - --redirect-url=https://bao.vaullet.dev/oauth2/callback
+            # Behind Traefik: X-Forwarded-* are honoured. The whitelist lets the post-login
+            # redirect return to the page that was asked for (a deep link into /ui/...) instead
+            # of falling back to /; any other host in a redirect is refused.
+            - --reverse-proxy=true
+            - --whitelist-domain=bao.vaullet.dev
+            - --skip-provider-button=true
+            # __Host- prefix: the browser only accepts it Secure, host-only and Path=/, so no
+            # sibling like vaullet.dev can set or overwrite it.
+            - --cookie-name=__Host-bao-session
+            - --cookie-secure=true
+            - --cookie-samesite=lax
+            # A session to the vault lasts a working day, not the default week.
+            - --cookie-expire=12h
+            - --silence-ping-logging=true
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: oauth2-proxy, key: client-id } }
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: oauth2-proxy, key: client-secret } }
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom: { secretKeyRef: { name: oauth2-proxy, key: cookie-secret } }
+            - { name: SSL_CERT_DIR, value: "/etc/ssl/certs:/etc/openbao-ca" }
+          ports:
+            - { name: http, containerPort: 4180 }
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ ALL ] }
+          volumeMounts:
+            - { name: openbao-ca, mountPath: /etc/openbao-ca, readOnly: true }

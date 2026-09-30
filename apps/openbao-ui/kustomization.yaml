@@ -1,0 +1,15 @@
+# https://bao.vaullet.dev: OpenBao's UI (and, necessarily, its API, which the UI calls) behind
+# oauth2-proxy. Two locks in series: a GitHub login restricted to one account, then OpenBao's own
+# token or login. Nothing reaches OpenBao from the internet without passing the first.
+#
+# In-cluster clients (External Secrets) keep talking to openbao.openbao.svc directly and never
+# touch this path.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: openbao
+resources:
+  - serviceaccount.yaml
+  - externalsecret.yaml
+  - deployment.yaml
+  - service.yaml
+  - httproute.yaml
