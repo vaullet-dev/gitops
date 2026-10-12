@@ -11,6 +11,8 @@ resources:
 # Files are imported in name order, so the numeric prefix is the dependency order: roles exist
 # before any user references them, and client scopes before any client lists them.
 #
+# 12-vaullet-staff-group.yaml is the group that makes a user staff (wallet-auth-service /v1/staff).
+# Every cluster keeps it, and it comes before 20, whose staff test users are members.
 # 15-vaullet-client-scopes.yaml holds the scopes the services enforce. Every cluster keeps it.
 # 16-vaullet-account-id.yaml puts account_id in the token (ADR-006). Every cluster keeps it.
 # 20-vaullet-test-users.yaml and 25-vaullet-bruno-client.yaml are DEMO ONLY. A customer cluster
@@ -20,6 +22,7 @@ configMapGenerator:
   - name: keycloak-realm-config
     files:
       - realm/10-vaullet-roles.yaml
+      - realm/12-vaullet-staff-group.yaml
       - realm/15-vaullet-client-scopes.yaml
       - realm/16-vaullet-account-id.yaml
       - realm/20-vaullet-test-users.yaml

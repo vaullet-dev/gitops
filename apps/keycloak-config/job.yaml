@@ -78,6 +78,9 @@ spec:
             # created it. It ignores remote state (6.5.1, ClientScopeImportService.doRemoveOrphan),
             # so the first import of 15-vaullet-client-scopes.yaml would delete hand-made scopes too.
             - { name: IMPORT_MANAGED_CLIENTSCOPE, value: "no-delete" }
+            # Groups the same way (12-vaullet-staff-group.yaml): taking the staff group out of a file
+            # must not delete it, and every staff member's membership with it.
+            - { name: IMPORT_MANAGED_GROUP, value: "no-delete" }
             - name: TEST_USERS_PASSWORD
               valueFrom: { secretKeyRef: { name: keycloak-test-users, key: TEST_USERS_PASSWORD } }
             # $(env:WALLET_AUTH_CLIENT_SECRET) in 30-wallet-auth-service.yaml.

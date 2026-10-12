@@ -11,9 +11,9 @@
 # firstName, lastName and a verified email are filled in because Keycloak 26's user profile would
 # otherwise stop the first login with an "update your account" form.
 #
-# In realm `vaullet`, not in the separate `vaullet-admin` realm ADR-006 puts staff in: wallet-auth-
-# service trusts exactly one issuer today, https://vaullet.dev/auth/realms/vaullet. The five staff
-# users move when that realm, and a second trusted issuer, exist.
+# In realm `vaullet`, not in a separate `vaullet-admin` realm: staff live beside the end users
+# (architecture#2), and the five staff users are members of the `staff` group, which is what
+# wallet-auth-service's /v1/staff manages (12-vaullet-staff-group.yaml).
 #
 # Only test-end-user holds a wallet, so only it has an account row in auth_db (seeded by
 # wallet-auth-service, external_ref = this username). Staff administer accounts; they own none.
@@ -43,6 +43,8 @@ users:
         temporary: false
     realmRoles:
       - SUPPORT_AGENT
+    groups:
+      - /staff
   - username: test-fraud-reviewer
     enabled: true
     email: test-fraud-reviewer@test.vaullet.dev
@@ -55,6 +57,8 @@ users:
         temporary: false
     realmRoles:
       - FRAUD_REVIEWER
+    groups:
+      - /staff
   - username: test-finance
     enabled: true
     email: test-finance@test.vaullet.dev
@@ -67,6 +71,8 @@ users:
         temporary: false
     realmRoles:
       - FINANCE
+    groups:
+      - /staff
   - username: test-config-admin
     enabled: true
     email: test-config-admin@test.vaullet.dev
@@ -79,6 +85,8 @@ users:
         temporary: false
     realmRoles:
       - CONFIG_ADMIN
+    groups:
+      - /staff
   - username: test-super-admin
     enabled: true
     email: test-super-admin@test.vaullet.dev
@@ -91,3 +99,5 @@ users:
         temporary: false
     realmRoles:
       - SUPER_ADMIN
+    groups:
+      - /staff
