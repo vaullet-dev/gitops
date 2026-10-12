@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# The group every staff member is in (gitops#23, wallet-auth-service#29). Membership is what makes
+# someone staff: wallet-auth-service creates staff users in this group, in the same Admin API call
+# that creates the user, lists its members under /v1/staff, and refuses everybody outside it there.
+# Without the group it refuses to create staff at all.
+#
+# No roles of its own. Staff roles are granted to each member directly, so joining the group can
+# never hand anybody a role by itself.
+#
+# Every cluster keeps this file.
+realm: vaullet
+groups:
+  - name: staff
