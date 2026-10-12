@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# The realm's outgoing mail (gitops#20). Keycloak sends its own emails: wallet-auth-service's
+# invitations and password resets, and email verification. Without an SMTP server here,
+# wallet-auth-service refuses to create end users (EMAIL_DELIVERY_UNAVAILABLE), because an
+# invitation that cannot be sent is a user who cannot sign in.
+#
+# Mailjet, free plan. vaullet.dev is validated there, with SPF, DKIM and DMARC published at
+# Spaceship (2026-10-12), so any @vaullet.dev address may send. Port 587 with STARTTLS: the
+# submission port, encrypted before the password is sent.
+#
+# The SMTP user is Mailjet's API key and the password its secret key. Both come from OpenBao
+# kv/keycloak/smtp through externalsecret.yaml, never from git; Keycloak's admin API never shows
+# the password back.
+#
+# Every cluster needs one. A customer cluster puts its own server and sender here.
+realm: vaullet
+smtpServer:
+  host: in-v3.mailjet.com
+  port: "587"
+  starttls: "true"
+  ssl: "false"
+  auth: "true"
+  user: "$(env:SMTP_USERNAME)"
+  password: "$(env:SMTP_PASSWORD)"
+  from: no-reply@vaullet.dev
+  fromDisplayName: Vaullet
