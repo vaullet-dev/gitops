@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# The client the services' Swagger UI signs in with (gitops#27). Authorize in
+# https://vaullet.dev/api/auth/swagger-ui.html opens Keycloak's sign-in page and comes back with a
+# token, instead of asking for one to paste. The button is backend-common's (backend-common#16): an
+# OAuth2 authorization-code scheme next to the bearer one, built from the issuer, with this client
+# preset.
+#
+# Unlike bruno (25-), nothing here is demo-only:
+#
+#   * Authorization code with PKCE and nothing else. No password grant, no implicit flow, no service
+#     account: a token comes from the sign-in page, MFA included, or not at all.
+#   * Public, because Swagger UI runs in the browser and has nowhere to keep a secret. The PKCE
+#     verifier is what stops an intercepted code from being exchanged. Required, and only S256.
+#   * Exact redirect URIs, one per service that serves Swagger UI. Keycloak's only wildcard is a
+#     trailing *, which would let a sign-in finish on any page under it. A new service adds a line.
+#
+# It grants nothing by itself: the token carries the user's own realm roles, and each service checks
+# them. The default scopes are bruno's, so a request behaves the same from either. A customer cluster
+# keeps this file with its own hostname in redirectUris.
+realm: vaullet
+clients:
+  - clientId: swagger-ui
+    name: Swagger UI
+    description: Sign-in for the services' Swagger UI (authorization code + PKCE).
+    enabled: true
+    protocol: openid-connect
+    publicClient: true
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    implicitFlowEnabled: false
+    serviceAccountsEnabled: false
+    frontchannelLogout: false
+    redirectUris:
+      - https://vaullet.dev/api/auth/swagger-ui/oauth2-redirect.html
+    # Swagger UI fetches the token from the page. vaullet.dev serves both the page and Keycloak, so
+    # today that is same-origin; "+" (the redirect URIs' origins) keeps it working if they ever split.
+    webOrigins:
+      - "+"
+    attributes:
+      pkce.code.challenge.method: S256
+    fullScopeAllowed: true
+    # As in 25-: naming the list removes every scope it does not name, so Keycloak's own six stay in.
+    defaultClientScopes:
+      - basic
+      - acr
+      - profile
+      - email
+      - roles
+      - web-origins
+      - "identity:read"
+      - "identity:admin"
+      - "identity:self"
+      - account-id
+    optionalClientScopes: []

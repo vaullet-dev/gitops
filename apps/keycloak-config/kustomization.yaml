@@ -19,6 +19,8 @@ resources:
 # 16-vaullet-account-id.yaml puts account_id in the token (ADR-006). Every cluster keeps it.
 # 20-vaullet-test-users.yaml and 25-vaullet-bruno-client.yaml are DEMO ONLY. A customer cluster
 # drops those two lines.
+# 26-vaullet-swagger-ui-client.yaml is what Swagger UI signs in with. Every cluster that serves
+# Swagger UI keeps it, with its own hostname in redirectUris.
 # 30-wallet-auth-service.yaml is what local identity mode needs (ADR-014): every cluster keeps it.
 configMapGenerator:
   - name: keycloak-realm-config
@@ -30,4 +32,5 @@ configMapGenerator:
       - realm/16-vaullet-account-id.yaml
       - realm/20-vaullet-test-users.yaml
       - realm/25-vaullet-bruno-client.yaml
+      - realm/26-vaullet-swagger-ui-client.yaml
       - realm/30-wallet-auth-service.yaml
