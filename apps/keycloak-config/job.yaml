@@ -6,11 +6,12 @@
 # means it only starts once the ExternalSecret above is healthy, i.e. once its secret exists.
 #
 # What it may change, and what it may not:
-#   * Only the resource TYPES a realm file declares are touched: today realm roles, users, client
-#     scopes, clients and the user profile. Identity providers, flows and the rest of the realm are
-#     left exactly as they are, including everything configured by hand in the admin console.
-#   * Roles, clients and client scopes are no-delete (IMPORT_MANAGED_*): taking one out of a file
-#     does not take it out of Keycloak. Deleting one is a decision, not a side effect of an edit.
+#   * Only the resource TYPES a realm file declares are touched: today realm roles, groups, users,
+#     client scopes, clients, the user profile and the realm's SMTP server. Identity providers,
+#     flows and the rest of the realm are left exactly as they are, including everything configured
+#     by hand in the admin console.
+#   * Roles, groups, clients and client scopes are no-delete (IMPORT_MANAGED_*): taking one out of a
+#     file does not take it out of Keycloak. Deleting one is a decision, not a side effect of an edit.
 #   * The user profile is the exception: it is replaced whole, so 30-wallet-auth-service.yaml
 #     restates Keycloak's default attributes next to the one it adds.
 #   * Users are created and updated, never deleted. A user's realm roles are set to exactly the
@@ -86,6 +87,12 @@ spec:
             # $(env:WALLET_AUTH_CLIENT_SECRET) in 30-wallet-auth-service.yaml.
             - name: WALLET_AUTH_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: wallet-auth-client, key: WALLET_AUTH_CLIENT_SECRET } }
+            # $(env:SMTP_USERNAME) and $(env:SMTP_PASSWORD) in 05-vaullet-smtp.yaml: Mailjet's API key
+            # and secret key, from OpenBao kv/keycloak/smtp.
+            - name: SMTP_USERNAME
+              valueFrom: { secretKeyRef: { name: keycloak-smtp, key: SMTP_USERNAME } }
+            - name: SMTP_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak-smtp, key: SMTP_PASSWORD } }
             - { name: JAVA_OPTS, value: "-XX:MaxRAMPercentage=60" }
           resources:
             requests: { cpu: 100m, memory: 256Mi }

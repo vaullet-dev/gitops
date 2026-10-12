@@ -11,6 +11,8 @@ resources:
 # Files are imported in name order, so the numeric prefix is the dependency order: roles exist
 # before any user references them, and client scopes before any client lists them.
 #
+# 05-vaullet-smtp.yaml is the realm's outgoing mail (Mailjet). Every cluster needs one, with its
+# own server and sender.
 # 12-vaullet-staff-group.yaml is the group that makes a user staff (wallet-auth-service /v1/staff).
 # Every cluster keeps it, and it comes before 20, whose staff test users are members.
 # 15-vaullet-client-scopes.yaml holds the scopes the services enforce. Every cluster keeps it.
@@ -21,6 +23,7 @@ resources:
 configMapGenerator:
   - name: keycloak-realm-config
     files:
+      - realm/05-vaullet-smtp.yaml
       - realm/10-vaullet-roles.yaml
       - realm/12-vaullet-staff-group.yaml
       - realm/15-vaullet-client-scopes.yaml
