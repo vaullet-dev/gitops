@@ -20,10 +20,13 @@
 # client must never leave a demo cluster: anything holding a password skips the login page, and
 # everything the browser flow would add.
 #
-# Both identity scopes are DEFAULT scopes here, so every token from this client carries them without
+# The identity scopes are DEFAULT scopes here, so every token from this client carries them without
 # a `scope` parameter. That is safe only because wallet-auth-service also checks the realm role
-# (AccountAccess). test-end-user gets both scopes through this client and is still refused, which
-# is the case #15 closed.
+# (AccountAccess). test-end-user gets identity:read and identity:admin through this client and is
+# still refused, which is the case #15 closed.
+#
+# `account-id` puts the user's account_id in the token (16-vaullet-account-id.yaml), and
+# `identity:self` lets test-end-user read its own account at GET /v1/accounts/me.
 #
 # The default list names Keycloak's own six as well. When a client names either list, Keycloak
 # removes every scope the lists do not name (RepresentationToModel.updateClientScopes). Naming only
@@ -61,4 +64,6 @@ clients:
       - web-origins
       - "identity:read"
       - "identity:admin"
+      - "identity:self"
+      - account-id
     optionalClientScopes: []

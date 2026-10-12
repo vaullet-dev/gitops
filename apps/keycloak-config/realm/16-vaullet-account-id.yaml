@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# `account_id` in the token (ADR-006 "The internal contract"). Every service keys money on Vaullet's
+# own id, never on Keycloak's `sub`, and this is the mapper that puts it there: it copies the user
+# attribute `account_id` into a claim of the same name.
+#
+# wallet-auth-service writes the attribute:
+#
+#   * when it creates an end user (POST /v1/accounts with an identity);
+#   * when a user who signed up themselves, with Google or the registration form, first claims
+#     their account (PUT /v1/accounts/me, wallet-auth-service#24).
+#
+# A user without the attribute simply gets no claim. That is the state of a self-registered user
+# between their first sign-in and PUT /v1/accounts/me; the client refreshes its token afterwards.
+#
+# A client scope rather than a mapper on each client, so a client gets it by listing one name. It is
+# not a realm default scope: clients here name their scope lists explicitly (see 25-), and a new
+# client should decide whether its tokens carry an account.
+realm: vaullet
+clientScopes:
+  - name: account-id
+    description: Puts the user's Vaullet account_id in the token (ADR-006)
+    protocol: openid-connect
+    attributes:
+      # A carrier for the mapper, not a permission: nothing lands in the token's `scope` claim.
+      include.in.token.scope: "false"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      - name: account_id
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-attribute-mapper
+        consentRequired: false
+        config:
+          user.attribute: account_id
+          claim.name: account_id
+          jsonType.label: String
+          access.token.claim: "true"
+          introspection.token.claim: "true"
+          id.token.claim: "true"
+          userinfo.token.claim: "true"
+          multivalued: "false"
