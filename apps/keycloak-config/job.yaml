@@ -65,6 +65,8 @@ spec:
             - { name: IMPORT_FILES_LOCATIONS, value: "file:/config/*.yaml" }
             # $(env:TEST_USERS_PASSWORD) in 20-vaullet-test-users.yaml; an undefined variable is a
             # hard error, so a missing secret can never become an empty password.
+            # The whole file is substituted, comments included: a shell $(...) in a realm file's
+            # comment is an undefined variable too, and stops the import of every file.
             - { name: IMPORT_VARSUBSTITUTION_ENABLED, value: "true" }
             # The import cache skips a file whose text is unchanged. The password comes from the
             # environment, not the file, so with the cache on a rotation in OpenBao would never land.
@@ -87,6 +89,9 @@ spec:
             # $(env:WALLET_AUTH_CLIENT_SECRET) in 30-wallet-auth-service.yaml.
             - name: WALLET_AUTH_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: wallet-auth-client, key: WALLET_AUTH_CLIENT_SECRET } }
+            # $(env:LEDGER_OPS_CLIENT_SECRET) in 27-vaullet-ledger-ops-client.yaml.
+            - name: LEDGER_OPS_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: ledger-ops-client, key: LEDGER_OPS_CLIENT_SECRET } }
             # $(env:SMTP_USERNAME) and $(env:SMTP_PASSWORD) in 05-vaullet-smtp.yaml: Mailjet's API key
             # and secret key, from OpenBao kv/keycloak/smtp.
             - name: SMTP_USERNAME

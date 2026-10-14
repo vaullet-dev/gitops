@@ -1,0 +1,42 @@
+# The OpenBao store for wallet-ledger's credentials. Here rather than in the service
+# repository for wallet-auth.yaml's reason: it is CLUSTER-scoped, and a service cannot
+# grant itself access to a secret store.
+#
+# The same three namespaces as wallet-auth's, for the same three jobs:
+#
+#   wallet-ledger  the ledger and its Flyway Job, to CONNECT with the credentials
+#   postgres       CloudNativePG, to SET ledger_migrator's and ledger_app's passwords to
+#                  the same values (apps/db/postgres/credentials.yaml)
+#   keycloak       keycloak-config-cli, to SET client ledger-ops's secret to the value in
+#                  kv/wallet-ledger/keycloak-client
+#
+# One value, one path, two readers, as there. The client secret's second reader is a
+# person rather than the service: the ledger never logs in to Keycloak, it only checks
+# tokens. Whoever calls it by hand fetches a ledger-ops token with that value (README,
+# "Reaching things").
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: openbao-wallet-ledger
+spec:
+  conditions:
+    - namespaces: [ wallet-ledger, postgres, keycloak ]
+  provider:
+    vault:
+      server: https://openbao.openbao.svc:8200
+      path: kv
+      version: v2
+      # OpenBao serves a certificate from its own namespaced cert-manager CA, so
+      # the public trust store is no help here.
+      caProvider:
+        type: Secret
+        name: openbao-ca
+        namespace: openbao
+        key: ca.crt
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: wallet-ledger      # created by: 03-openbao.sh onboard wallet-ledger
+          serviceAccountRef:
+            name: secrets-reader
+            namespace: wallet-ledger

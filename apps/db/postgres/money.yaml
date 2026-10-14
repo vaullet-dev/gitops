@@ -97,6 +97,36 @@ spec:
         # the cluster.
         passwordSecret:
           name: transactions-db-credentials
+      # The identity that runs Flyway for wallet-ledger-service, and the ONLY one with
+      # DDL rights on vaullet_db, the ledger's database (ADR-003). Same split as
+      # auth_migrator and auth_app in platform.yaml, for the same reason: the running
+      # ledger holds a role with no DDL at all.
+      #
+      # inRoles: [vaullet] for platform.yaml's reason too: `vaullet` owns vaullet_db
+      # (initdb above), and CloudNativePG can declare membership but not an arbitrary
+      # GRANT. Same cost as well: what Flyway creates belongs to ledger_migrator, so
+      # ledger_app can touch nothing until the ledger's own migration grants it.
+      - name: ledger_migrator
+        ensure: present
+        login: true
+        inRoles: [ vaullet ]
+        comment: runs Flyway for wallet-ledger-service; holds DDL on vaullet_db
+        passwordSecret:
+          name: ledger-migrator-db-credentials
+      # What the RUNNING ledger connects as. No inRoles: it inherits nothing, and the
+      # ledger's V3 migration grants it what each table needs, table by table, and never
+      # DELETE: nothing in a ledger is removed. It owns nothing either, which is what
+      # makes the journal's append-only rules hold against the service itself: only a
+      # table's owner can drop a rule from it.
+      #
+      # It has to exist before that migration runs, and ledger_migrator cannot create
+      # roles, so it comes from here, like its password.
+      - name: ledger_app
+        ensure: present
+        login: true
+        comment: the running wallet-ledger-service; no DDL, no DELETE
+        passwordSecret:
+          name: ledger-app-db-credentials
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Database

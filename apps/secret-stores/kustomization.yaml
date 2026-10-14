@@ -5,5 +5,6 @@ kind: Kustomization
 # namespace onto objects that must not have one.
 resources:
   - wallet-auth.yaml
+  - wallet-ledger.yaml
   - keycloak.yaml
   - openbao.yaml

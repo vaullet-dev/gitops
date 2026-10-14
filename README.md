@@ -92,7 +92,7 @@ left panel, and the filter goes into the URL (`/applications?proj=infra`).
 |---|---|---|
 | `infra` | crds, cert-manager, traefik, local-path-provisioner, external-secrets, cloudnative-pg, argo-rollouts, argocd | yes — CRDs, ClusterIssuers, GatewayClass, StorageClass |
 | `platform` | openbao, openbao-ui, secret-stores, postgres, keycloak, keycloak-config | yes, for now — ClusterSecretStores, the charts' cluster RBAC |
-| `apps` | web, wallet-auth, and every `wallet-*` service to come | **no**, except `Namespace` |
+| `apps` | web, wallet-auth, wallet-ledger, and every `wallet-*` service to come | **no**, except `Namespace` |
 
 `apps` (called `services` until 2026-09-30) is also restricted by source (`github.com/vaullet-dev/*`) and by
 destination namespace (`web`, `wallet-*`), so a service cannot deploy into
@@ -177,19 +177,20 @@ else. Onboarding a service is three things:
    and role, both named after the namespace.
 2. The service's own repo ships a ServiceAccount named `secrets-reader` and its
    `ExternalSecret`s.
-3. This repo gets a ClusterSecretStore that only that namespace may use:
+3. This repo gets a ClusterSecretStore that only the namespaces it names may
+   use: the service's own, plus `postgres` when CloudNativePG sets the
+   service's database passwords, and `keycloak` when the realm import sets its
+   client secret. wallet-ledger's, `apps/secret-stores/wallet-ledger.yaml`,
+   says why for each:
 
 ```yaml
 apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: openbao-wallet-ledger
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   conditions:
-    - namespaces: [ wallet-ledger ]
+    - namespaces: [ wallet-ledger, postgres, keycloak ]
   provider:
     vault:                                   # OpenBao speaks the Vault API
       server: https://openbao.openbao.svc:8200
@@ -197,8 +198,8 @@ spec:
       version: v2
       caProvider:
         type: Secret
+        name: openbao-ca
         namespace: openbao
-        name: openbao-tls
         key: ca.crt
       auth:
         kubernetes:
@@ -211,8 +212,25 @@ spec:
 
 The store is cluster-scoped, and the `apps` project cannot create
 cluster-scoped objects. That is on purpose: a service cannot point itself at
-another service's secrets. The same service's database and roles will live
-here too.
+another service's secrets. The service's database roles live here too, in
+`apps/db/postgres`.
+
+**wallet-ledger** is onboarded exactly this way. Once, before its Application
+first syncs (`clusters/prod/wallet-ledger.yaml` has the order, and why it
+matters):
+
+```sh
+bootstrap/03-openbao.sh onboard wallet-ledger
+bao kv put kv/wallet-ledger/db-migrator     password="$(openssl rand -base64 24)"
+bao kv put kv/wallet-ledger/db-app          password="$(openssl rand -base64 24)"
+bao kv put kv/wallet-ledger/keycloak-client secret="$(openssl rand -base64 32)"
+```
+
+The first two are the passwords of `ledger_migrator` and `ledger_app`, the
+ledger's roles in `vaullet_db` on the `money` cluster: its Flyway Job and the
+running ledger connect with them, and CloudNativePG sets the roles to the same
+values. The third is the secret of client `ledger-ops`, which is how a person
+gets a token for the ledger (see "Reaching things").
 
 **TLS.** OpenBao serves a certificate from a private CA in its own namespace
 (`apps/openbao/tls.yaml`). Clients trust `ca.crt` from the `openbao-tls` Secret.
@@ -279,6 +297,7 @@ whose networks work best.
 | Kubernetes API (6443) | closed at the firewall | SSH only |
 | Traefik dashboard | not exposed | SSH tunnel |
 | OpenBao UI and API | `https://bao.vaullet.dev` | GitHub login (one allowed account, oauth2-proxy), then an OpenBao token |
+| The ledger (wallet-ledger-service) | **no route**: ClusterIP `ledger-service` in `wallet-ledger` | SSH tunnel, then a token from client `ledger-ops` |
 | Argo Rollouts UI | **not deployed** | see TODO.md |
 
 Argo CD and OpenBao are the only administrative UIs on the internet, and only because they
@@ -304,6 +323,20 @@ ssh -L 9000:localhost:9000 root@<IP> \
 # cert is from the private CA. localhost is not HSTS-preloaded, so you can click through.
 ssh -L 8200:localhost:8200 root@<IP> \
   'kubectl -n openbao port-forward svc/openbao 8200:8200'
+
+# The ledger at http://localhost:18081 (18081 is also what the ledger's Bruno
+# collection expects). It is not on vaullet.dev at all: ADR-008
+# admits service tokens only, from inside the cluster. With the tunnel open, call
+# it with a token from client ledger-ops (apps/keycloak-config/realm/27-*), which
+# carries ledger:read and ledger:write and names the client, not you. A token
+# expires in minutes: fetch a new one rather than keeping it.
+ssh -L 18081:localhost:18081 root@<IP> \
+  'kubectl -n wallet-ledger port-forward svc/ledger-service 18081:80'
+TOKEN=$(curl -s https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/token \
+  -d grant_type=client_credentials -d client_id=ledger-ops \
+  --data-urlencode client_secret="$(bao kv get -field=secret kv/wallet-ledger/keycloak-client)" \
+  | jq -r .access_token)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:18081/v1/wallets
 
 # Anything else: kubeconfig is at /root/.kube/config, so plain `kubectl` works
 ssh root@<IP> 'kubectl get pods -A'
