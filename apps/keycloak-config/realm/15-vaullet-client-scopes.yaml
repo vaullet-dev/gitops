@@ -1,21 +1,34 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
 #
 # Client scopes of realm `vaullet`: one per scope a service enforces, so that a token can carry it.
-# Today these are wallet-auth-service's three:
+# Today these are wallet-auth-service's three and wallet-ledger-service's two:
 #
 #   identity:read    GET /v1/accounts/**
 #   identity:admin   POST, PATCH and DELETE on /v1/accounts/**
 #   identity:self    GET and PUT /v1/accounts/me: an end user's own account, and nobody else's
+#   ledger:read      every GET on the ledger: balances, reservations, wallets
+#   ledger:write     every POST, PATCH and DELETE on the ledger: holds placed and released, wallets
+#                    opened, frozen, unfrozen and closed
 #
-# Without them no real token carries either scope, and every rule in wallet-auth-service refuses
-# everyone, SUPER_ADMIN included (its README, "Still open"). A scope says what the client may ask
-# for, and the realm role in the same token says who is asking. The service checks both.
+# Without the identity scopes no real token carries one, and every rule in wallet-auth-service
+# refuses everyone, SUPER_ADMIN included (its README, "Still open"). A scope says what the client
+# may ask for, and the realm role in the same token says who is asking. wallet-auth-service checks
+# both.
 #
-# ADR-008's scope table is meant to be the source for these, and it has no rows for them yet. Until
-# it does, this file is the record. When the rows land there, keep the names identical here.
+# wallet-ledger-service checks the scope alone. Its callers are services (ADR-008), with no person
+# behind the token whose role could narrow it, so on the ledger the scope IS the permission. That is
+# why the two ledger scopes go only to clients that call the ledger, ledger-ops
+# (27-vaullet-ledger-ops-client.yaml) today, and never to a client people sign in with: on bruno or
+# swagger-ui every user's token would carry them, an end user's included.
+#
+# ADR-008's scope table is meant to be the source for these, and it does not match them yet. It has
+# identity:read and identity:admin but no row for identity:self, and for the ledger it names only
+# ledger:reserve (Transaction Service, POST and DELETE /reservations), while the ledger checks
+# ledger:read and ledger:write; wallet-ledger-service's README calls that unreconciled. Until the
+# table agrees, this file is the record. When the rows land there, keep the names identical here.
 #
 # Only `clientScopes` is declared, so nothing else in the realm is touched. Which clients get these
-# scopes is up to each client (25-vaullet-bruno-client.yaml).
+# scopes is up to each client (25-vaullet-bruno-client.yaml, 27-vaullet-ledger-ops-client.yaml).
 #
 # job.yaml sets IMPORT_MANAGED_CLIENTSCOPE=no-delete, and this file is why. Without it,
 # keycloak-config-cli's default (FULL) would delete, on this file's first import, every client scope
@@ -40,6 +53,20 @@ clientScopes:
   # account at first sign-in (just-in-time, wallet-auth-service#24); GET reads it back.
   - name: "identity:self"
     description: An end user's own account in wallet-auth-service (GET and PUT /v1/accounts/me)
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+  # The ledger's two (wallet-ledger-service, "Security"). Unlike the three above, nothing else in
+  # the token narrows them: whoever holds ledger:write may change any account's holds and wallets.
+  - name: "ledger:read"
+    description: Read the ledger in wallet-ledger-service (every GET)
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+  - name: "ledger:write"
+    description: Change the ledger in wallet-ledger-service (POST, PATCH and DELETE)
     protocol: openid-connect
     attributes:
       include.in.token.scope: "true"

@@ -1,0 +1,55 @@
+# Wave 2, with the other services: after the operators (-1), the databases (1),
+# and therefore after vaullet_db exists and its two ledger roles are declared.
+#
+# The service repository ships the Flyway Job, the Deployment and the ClusterIP
+# Service `ledger-service`, and no HTTPRoute: the ledger is not on vaullet.dev.
+# ADR-008 admits service tokens only, from inside the cluster, so a person reaches
+# it over a port-forward with a token from client ledger-ops (README, "Reaching
+# things"). Its OAUTH2_ISSUER_URI must match Keycloak's issuer,
+# https://vaullet.dev/auth/realms/vaullet (keycloak.yaml), and its database is
+# vaullet_db on money-rw.postgres.svc (apps/db/postgres/money.yaml).
+#
+# The first time, in this order:
+#
+#   1. bootstrap/03-openbao.sh onboard wallet-ledger, and the three `bao kv put`s in
+#      the README: kv/wallet-ledger/db-migrator, db-app and keycloak-client.
+#   2. The ledger release that ships those manifests, 0.2.0 (wallet-ledger-service#12).
+#      This Application deploys whatever tag that repository's kustomization pins,
+#      so the image has to exist before this file does.
+#   3. This file.
+#
+# The order matters beyond this Application. openbao-wallet-ledger logs in as
+# `secrets-reader` in wallet-ledger, which only this Application creates, and that
+# store also reads ledger-ops's secret for keycloak-config. Until this Application
+# has synced once, the realm import waits, every realm file with it, and so do the
+# two roles' passwords in postgres.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wallet-ledger
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: apps
+  source:
+    repoURL: https://github.com/vaullet-dev/wallet-ledger-service.git
+    targetRevision: master
+    path: .
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wallet-ledger
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+    # Retry without limit, for keycloak-config.yaml's reason. Even in the right order
+    # the first sync can race itself: ledger_migrator gets its password only after
+    # this Application has created secrets-reader, and the Flyway Job the same sync
+    # starts can ask for it sooner. That Job fails, and without a retry nothing runs
+    # it again; with one, a later attempt connects.
+    retry:
+      limit: -1
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

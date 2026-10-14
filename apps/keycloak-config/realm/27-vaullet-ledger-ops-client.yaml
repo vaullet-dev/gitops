@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# The client staff call the ledger with, by hand (gitops#29). wallet-ledger-service has no route on
+# vaullet.dev, ADR-008 gives it service tokens only, and no service that calls it is deployed yet. So
+# the way in is a port-forward and a token from this client (README, "Reaching things", has the
+# commands):
+#
+#   curl https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/token \
+#     -d grant_type=client_credentials -d client_id=ledger-ops --data-urlencode client_secret=...
+#
+# The commands stay in the README because the import substitutes variables in the whole file,
+# comments included, and a shell command substitution here reads to it as one it cannot resolve.
+#
+# Confidential, and client credentials only: no browser login, no password grant, no implicit flow.
+# A token comes from the secret and from nothing else. The secret is OpenBao
+# kv/wallet-ledger/keycloak-client, which the import sets as $(env:LEDGER_OPS_CLIENT_SECRET).
+#
+# The default scopes are ledger:read and ledger:write, what the ledger checks
+# (15-vaullet-client-scopes.yaml), and nothing else. Naming the lists removes every scope they do
+# not name (see 25-), and that is the point here: no profile, email, roles or account-id, because no
+# user is behind the token; no web-origins, because no browser calls with it; no optional scopes, so
+# a `scope` parameter cannot add one.
+#
+# Not `basic` either, although bruno and swagger-ui keep it. It holds the `sub` and `auth_time`
+# mappers, and a client-credentials token needs neither: Keycloak sets `sub` to the service
+# account's id by itself, and there is no login to give an auth_time. On 26.7.4 a token from this
+# client has the same claims with `basic` or without it. Keycloak does add one scope of its own to
+# every client with a service account, `service_account` (client_id, clientHost, clientAddress),
+# and the import leaves it there.
+#
+# fullScopeAllowed: false. The ledger needs no realm role, and with no role mapped to this client
+# none can reach its tokens, not even one granted to its service account by hand later.
+#
+# Every cluster keeps this file. Nothing in it is demo data, the secret is the cluster's own, and the
+# ledger it reaches has no route. What it is not is personal: `azp` says ledger-ops, not who held the
+# secret. People reaching the ledger under their own names is architecture's D2 (human and
+# operational access), and its answer replaces this client.
+realm: vaullet
+clients:
+  - clientId: ledger-ops
+    name: Ledger operations
+    description: Staff calls to wallet-ledger-service over a port-forward (client credentials).
+    enabled: true
+    protocol: openid-connect
+    publicClient: false
+    clientAuthenticatorType: client-secret
+    # OpenBao kv/wallet-ledger/keycloak-client, through externalsecret.yaml (ledger-ops-client).
+    secret: "$(env:LEDGER_OPS_CLIENT_SECRET)"
+    serviceAccountsEnabled: true
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    frontchannelLogout: false
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - "ledger:read"
+      - "ledger:write"
+    optionalClientScopes: []
