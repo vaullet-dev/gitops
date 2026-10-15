@@ -1,0 +1,34 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "money (ledger, transactions)",
+      "Group": "vaullet",
+      "Host": "money-rw.postgres.svc",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "dba_rw",
+      "SSLMode": "require",
+      "Comment": "vaullet_db (wallet-ledger-service), transactions_db"
+    },
+    "2": {
+      "Name": "platform (auth, Keycloak, support)",
+      "Group": "vaullet",
+      "Host": "platform-rw.postgres.svc",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "dba_rw",
+      "SSLMode": "require",
+      "Comment": "auth_db (identity_schema, keycloak_schema), support_db"
+    },
+    "3": {
+      "Name": "analytics (fraud)",
+      "Group": "vaullet",
+      "Host": "analytics-rw.postgres.svc",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "dba_rw",
+      "SSLMode": "require",
+      "Comment": "fraud_db"
+    }
+  }
+}

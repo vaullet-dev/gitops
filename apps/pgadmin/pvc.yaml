@@ -1,0 +1,12 @@
+# pgAdmin's config database: its users, the saved server passwords (encrypted with the
+# user's login password) and the query history. local-path, so the pod stays on whichever
+# node first bound it, which is fine for a tool nobody depends on.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgadmin
+spec:
+  accessModes: [ ReadWriteOnce ]
+  storageClassName: local-path
+  resources:
+    requests: { storage: 1Gi }
