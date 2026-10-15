@@ -23,7 +23,8 @@ resources:
 # Swagger UI keeps it, with its own hostname in redirectUris.
 # 27-vaullet-ledger-ops-client.yaml is how staff call the ledger by hand, since it has no route.
 # Every cluster keeps it until people get their own way in (the file says why).
-# 30-wallet-auth-service.yaml is what local identity mode needs (ADR-014): every cluster keeps it.
+# 30-wallet-auth-service.yaml is what local identity mode needs (ADR-014), and the client whose
+# ledger:write token opens every new account's wallets, in either mode: every cluster keeps it.
 configMapGenerator:
   - name: keycloak-realm-config
     files:

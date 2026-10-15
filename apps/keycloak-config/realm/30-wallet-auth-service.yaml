@@ -1,10 +1,12 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
 #
-# What wallet-auth-service needs from realm `vaullet` to create end users itself (ADR-014,
-# wallet-auth-service #17):
+# What wallet-auth-service needs from realm `vaullet`:
 #
-#   * a confidential client whose service account can manage users, and nothing more;
-#   * `account_id` in the user profile, editable by admins only.
+#   * a confidential client whose service account can manage users, and nothing more, to create
+#     end users itself (ADR-014, wallet-auth-service #17);
+#   * `account_id` in the user profile, editable by admins only;
+#   * ledger:write as an optional scope of that client, to open each new account's wallets in
+#     wallet-ledger-service (wallet-auth-service #39, gitops #30).
 #
 # The service checks the second before its first create and refuses to go on without it.
 realm: vaullet
@@ -69,7 +71,7 @@ userProfile:
 clients:
   - clientId: wallet-auth-service
     name: wallet-auth-service
-    description: Auth service. Creates, changes and deletes end users through the Admin API (ADR-014).
+    description: Auth service. Manages end users through the Admin API (ADR-014) and opens new accounts' wallets.
     enabled: true
     protocol: openid-connect
     publicClient: false
@@ -82,6 +84,39 @@ clients:
     implicitFlowEnabled: false
     directAccessGrantsEnabled: false
     frontchannelLogout: false
+    # ledger:write is OPTIONAL: a token carries it only when asked for with scope=ledger:write.
+    # The outbox relay asks, to open a new account's REAL and BONUS wallets (POST /v1/wallets,
+    # wallet-auth-service #39); the Admin API calls do not, so their tokens stay as they were.
+    # Not ledger:read: the service reads nothing from the ledger.
+    #
+    # Both lists are named, because naming only the optional one works on the cluster where this
+    # client already exists and breaks on the next one. Where it exists, the import replaces the
+    # list it is given and leaves the other alone. Where it does not, Keycloak creates the client
+    # with the scopes named and none of the realm's defaults: on 26.7.4 that left service_account
+    # as its only default scope. Named here, both lists are the same on every cluster.
+    #
+    # The default list is Keycloak's own six, what this client has had since it was made, so a
+    # token asked for without a scope is unchanged. The optional list replaces Keycloak's five
+    # (address, phone, offline_access, microprofile-jwt, organization): nobody signs in through this
+    # client, so nothing asked for them.
+    #
+    # What the scope allows is the ledger's to say (15-vaullet-client-scopes.yaml): any account's
+    # wallets and holds, not only a new account's wallets. The reverse holds too: the relay's token
+    # passes the Admin API as the service's own does, manage-users and all. The Admin API checks the
+    # service account's roles within the client's role scope, and fullScopeAllowed puts all of them
+    # in scope whatever the token asked for, so the ledger receives a token that could manage users.
+    # Keeping the two apart takes a second client, or fullScopeAllowed: false and the three roles
+    # behind a second optional scope that only the Admin API calls ask for; on 26.7.4 a token
+    # without that scope then gets 403 from the Admin API.
+    defaultClientScopes:
+      - basic
+      - acr
+      - profile
+      - email
+      - roles
+      - web-origins
+    optionalClientScopes:
+      - "ledger:write"
 
 users:
   # The client's service account, holding exactly what the service uses: manage-users to create,
