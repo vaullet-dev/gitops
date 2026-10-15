@@ -1,7 +1,7 @@
 # pgAdmin 4, reading and writing every cluster's tables as dba_rw (apps/db/postgres, gitops#33).
 #
 # Two locks: the SSH tunnel to reach it at all (no route, see service.yaml), then pgAdmin's own
-# login (externalsecret.yaml, generated). Then each server asks for dba_rw's password the first
+# login (externalsecret.yaml, from OpenBao). Then each server asks for dba_rw's password the first
 # time it is opened (apps/db/postgres/credentials.yaml); pgAdmin can keep it, encrypted with your
 # login password, on its volume.
 apiVersion: apps/v1

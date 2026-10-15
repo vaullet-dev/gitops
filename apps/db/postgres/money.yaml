@@ -131,7 +131,7 @@ spec:
       # database of this cluster, and nothing more. pg_read_all_data and pg_write_all_data
       # are table-level only: no DDL, no roles, no superuser, and the ledger journal's
       # append-only rules still apply to it, because only a table's owner can drop a rule.
-      # One password for all three clusters, generated in credentials.yaml.
+      # One password for all three clusters, from kv/postgres/dba-rw (credentials.yaml).
       - name: dba_rw
         ensure: present
         login: true

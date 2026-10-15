@@ -8,3 +8,4 @@ resources:
   - wallet-ledger.yaml
   - keycloak.yaml
   - openbao.yaml
+  - pgadmin.yaml

@@ -2,8 +2,9 @@
 # cluster by the time pgAdmin first connects. pgAdmin 4, no route, reached through an SSH
 # tunnel (README, "Reaching things"; gitops#33).
 #
-# Nothing to do by hand first: both passwords (pgAdmin's login, dba_rw's) are generated
-# by External Secrets on the first sync, not stored in OpenBao.
+# Its two passwords live in OpenBao: kv/pgadmin/admin (pgAdmin's login) and
+# kv/postgres/dba-rw (the database role), with `bootstrap/03-openbao.sh onboard pgadmin`
+# for the first. README, "Secrets".
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -26,8 +27,8 @@ spec:
     automated: { prune: true, selfHeal: true }
     syncOptions:
       - CreateNamespace=true
-    # The login Secret is generated in the same sync, so the first pod can start before it
-    # exists; keep retrying rather than giving up on the first sync.
+    # On a fresh cluster the login Secret appears only once OpenBao is onboarded and holds
+    # kv/pgadmin/admin; keep retrying rather than giving up on the first sync.
     retry:
       limit: -1
       backoff: { duration: 30s, factor: 2, maxDuration: 5m }
