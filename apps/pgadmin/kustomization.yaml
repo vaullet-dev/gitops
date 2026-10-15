@@ -1,0 +1,14 @@
+# pgAdmin 4 inside the cluster (gitops#33), reached only through an SSH tunnel (README,
+# "Reaching things"). It logs in to money, platform and analytics as dba_rw, which
+# apps/db/postgres declares on each cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pgadmin
+resources:
+  - externalsecret.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+configMapGenerator:
+  - name: pgadmin-servers
+    files: [ servers.json ]

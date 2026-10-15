@@ -1,0 +1,37 @@
+# Wave 2: after the secret stores (-1) and the databases (1), so dba_rw exists on every
+# cluster by the time pgAdmin first connects. pgAdmin 4, no route, reached through an SSH
+# tunnel (README, "Reaching things"; gitops#33).
+#
+# The first time, in this order:
+#
+#   1. bootstrap/03-openbao.sh onboard pgadmin
+#   2. bao kv put kv/pgadmin/admin  email=... password=...      (pgAdmin's own login)
+#      bao kv put kv/postgres/dba-rw password="$(openssl rand -base64 24)"
+#   3. This file.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pgadmin
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/vaullet-dev/gitops.git
+    targetRevision: main
+    path: apps/pgadmin
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pgadmin
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+    # Until step 1 and 2 above are done the login Secret does not exist and the pod waits;
+    # keep retrying rather than giving up on the first sync.
+    retry:
+      limit: -1
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

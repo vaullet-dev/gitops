@@ -91,7 +91,7 @@ left panel, and the filter goes into the URL (`/applications?proj=infra`).
 | Project | Holds | May create cluster-scoped objects |
 |---|---|---|
 | `infra` | crds, cert-manager, traefik, local-path-provisioner, external-secrets, cloudnative-pg, argo-rollouts, argocd | yes — CRDs, ClusterIssuers, GatewayClass, StorageClass |
-| `platform` | openbao, openbao-ui, secret-stores, postgres, keycloak, keycloak-config | yes, for now — ClusterSecretStores, the charts' cluster RBAC |
+| `platform` | openbao, openbao-ui, secret-stores, postgres, keycloak, keycloak-config, pgadmin | yes, for now — ClusterSecretStores, the charts' cluster RBAC |
 | `apps` | web, wallet-auth, wallet-ledger, and every `wallet-*` service to come | **no**, except `Namespace` |
 
 `apps` (called `services` until 2026-09-30) is also restricted by source (`github.com/vaullet-dev/*`) and by
@@ -232,6 +232,22 @@ running ledger connect with them, and CloudNativePG sets the roles to the same
 values. The third is the secret of client `ledger-ops`, which is how a person
 gets a token for the ledger (see "Reaching things").
 
+**pgadmin** is onboarded the same way, before `clusters/prod/pgadmin.yaml` first
+syncs:
+
+```sh
+bootstrap/03-openbao.sh onboard pgadmin
+bao kv put kv/pgadmin/admin   email=<you>@vaullet.dev password="$(openssl rand -base64 24)"
+bao kv put kv/postgres/dba-rw password="$(openssl rand -base64 24)"
+```
+
+The first is pgAdmin's own login. pgAdmin reads it only on its first start, while its
+volume is empty; change it in pgAdmin after that. The second is `dba_rw`'s password, the
+role pgAdmin connects as on `money`, `platform` and `analytics`. It reads and writes every
+table and can do nothing else: no DDL, no roles. It sits under `kv/postgres/` because
+CloudNativePG is its only reader in the cluster. Its other reader is you, typing it into
+pgAdmin, so it never reaches pgAdmin's namespace.
+
 **TLS.** OpenBao serves a certificate from a private CA in its own namespace
 (`apps/openbao/tls.yaml`). Clients trust `ca.crt` from the `openbao-tls` Secret.
 
@@ -298,6 +314,7 @@ whose networks work best.
 | Traefik dashboard | not exposed | SSH tunnel |
 | OpenBao UI and API | `https://bao.vaullet.dev` | GitHub login (one allowed account, oauth2-proxy), then an OpenBao token |
 | The ledger (wallet-ledger-service) | **no route**: ClusterIP `ledger-service` in `wallet-ledger` | SSH tunnel, then a token from client `ledger-ops` |
+| pgAdmin (all three Postgres clusters, read/write) | **no route**: ClusterIP `pgadmin` in `pgadmin` | SSH tunnel, then pgAdmin's login, then `dba_rw`'s password |
 | Argo Rollouts UI | **not deployed** | see TODO.md |
 
 Argo CD and OpenBao are the only administrative UIs on the internet, and only because they
@@ -337,6 +354,14 @@ TOKEN=$(curl -s https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/
   --data-urlencode client_secret="$(bao kv get -field=secret kv/wallet-ledger/keycloak-client)" \
   | jq -r .access_token)
 curl -H "Authorization: Bearer $TOKEN" http://localhost:18081/v1/wallets
+
+# pgAdmin at http://localhost:5050. Log in with kv/pgadmin/admin. The three clusters
+# are already listed under "vaullet". The first time you open one, it asks for dba_rw's
+# password: `bao kv get -field=password kv/postgres/dba-rw`. Its rights are table data
+# only, but that includes the money database, so close the tunnel when you're done.
+# There is no public db.vaullet.dev on purpose; see TODO.md.
+ssh -L 5050:localhost:5050 root@<IP> \
+  'kubectl -n pgadmin port-forward svc/pgadmin 5050:80'
 
 # Anything else: kubeconfig is at /root/.kube/config, so plain `kubectl` works
 ssh root@<IP> 'kubectl get pods -A'

@@ -207,6 +207,19 @@ reserved and deliberately not wired up yet.
 | `vaullet.dev`, `www` | the app | live |
 | `argo.vaullet.dev` | Argo CD | ready to push |
 | `devops.vaullet.dev` | Argo Rollouts UI | **blocked — see below** |
+| `db.vaullet.dev` | pgAdmin | **deferred — see below** |
+
+- [ ] **pgAdmin outside the server: a public host and a read-only Mac client.**
+      Decided 2026-10-15: pgAdmin runs inside the cluster only, read/write, with
+      no public route; you reach it through an SSH tunnel, like Argo CD. Two
+      follow-ups were deliberately left out:
+      1. **`db.vaullet.dev`**: an HTTPRoute to pgAdmin behind oauth2-proxy (GitHub,
+         one account), with its own Gateway listener and certificate, the same as
+         `bao.vaullet.dev`. This puts a write-capable tool for the money database
+         on the internet, so it needs its own decision first.
+      2. **Read-only access from the Mac**: a `dba_ro` role (`pg_read_all_data`)
+         on money, platform and analytics, plus a tunnel script for a local client
+         (pgAdmin desktop, DBeaver, psql) on `localhost:15432-15434`.
 
 - [ ] **Put an authenticating proxy in front of the Rollouts UI before exposing
       it.** The dashboard cannot go on a subdomain as it stands:

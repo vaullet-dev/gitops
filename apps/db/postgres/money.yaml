@@ -127,6 +127,18 @@ spec:
         comment: the running wallet-ledger-service; no DDL, no DELETE
         passwordSecret:
           name: ledger-app-db-credentials
+      # pgAdmin's login (apps/pgadmin, gitops#33): reads and writes every table, in every
+      # database of this cluster, and nothing more. pg_read_all_data and pg_write_all_data
+      # are table-level only: no DDL, no roles, no superuser, and the ledger journal's
+      # append-only rules still apply to it, because only a table's owner can drop a rule.
+      # One password for all three clusters, generated in credentials.yaml.
+      - name: dba_rw
+        ensure: present
+        login: true
+        inRoles: [ pg_read_all_data, pg_write_all_data ]
+        comment: pgAdmin, a person at the keyboard; table data only, no DDL
+        passwordSecret:
+          name: dba-rw-db-credentials
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Database

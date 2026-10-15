@@ -1,0 +1,72 @@
+# pgAdmin 4, reading and writing every cluster's tables as dba_rw (apps/db/postgres, gitops#33).
+#
+# Two locks: the SSH tunnel to reach it at all (no route, see service.yaml), then pgAdmin's own
+# login (externalsecret.yaml). Then each server asks for dba_rw's password the first time it is
+# opened; pgAdmin can keep it, encrypted with your login password, on its volume.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin
+  labels: { app: pgadmin }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  # One RWO volume: the old pod has to let go of it before the new one can start.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: pgadmin }
+  template:
+    metadata:
+      labels: { app: pgadmin }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 5050             # the image's `pgadmin` user
+        runAsGroup: 5050
+        fsGroup: 5050
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: pgadmin }
+        - name: servers
+          configMap: { name: pgadmin-servers }
+      containers:
+        - name: pgadmin
+          image: dpage/pgadmin4:9.18.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              valueFrom: { secretKeyRef: { name: pgadmin-admin, key: email } }
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom: { secretKeyRef: { name: pgadmin-admin, key: password } }
+            # Not 80: binding below 1024 needs a capability, and this container has none.
+            - { name: PGADMIN_LISTEN_PORT, value: "8080" }
+            # Read on first start only, like the login above. Edit a server in the UI after that.
+            - { name: PGADMIN_SERVER_JSON_FILE, value: /pgadmin4/servers/servers.json }
+            # No mail relay in this pod; password-reset mails have nowhere to go anyway.
+            - { name: PGADMIN_DISABLE_POSTFIX, value: "true" }
+            # PGADMIN_CONFIG_* values are Python literals.
+            - { name: PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED, value: "False" }
+            - { name: PGADMIN_CONFIG_CHECK_EMAIL_DELIVERABILITY, value: "False" }
+            - { name: PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION, value: "True" }
+            # A tunnelled session to the money database lasts a working day at most.
+            - { name: PGADMIN_CONFIG_SESSION_EXPIRATION_TIME, value: "1" }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /misc/ping, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /misc/ping, port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits:   { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ ALL ] }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/pgadmin }
+            - { name: servers, mountPath: /pgadmin4/servers, readOnly: true }
