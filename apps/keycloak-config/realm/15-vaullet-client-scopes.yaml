@@ -17,9 +17,11 @@
 #
 # wallet-ledger-service checks the scope alone. Its callers are services (ADR-008), with no person
 # behind the token whose role could narrow it, so on the ledger the scope IS the permission. That is
-# why the two ledger scopes go only to clients that call the ledger, ledger-ops
-# (27-vaullet-ledger-ops-client.yaml) today, and never to a client people sign in with: on bruno or
-# swagger-ui every user's token would carry them, an end user's included.
+# why the two ledger scopes go only to clients that call the ledger, and never to a client people
+# sign in with: on bruno or swagger-ui every user's token would carry them, an end user's included.
+# Today that is ledger-ops (27-vaullet-ledger-ops-client.yaml), with both as default scopes, and
+# wallet-auth-service (30-wallet-auth-service.yaml), with ledger:write only, as an optional scope:
+# its outbox relay asks for it to open each new account's wallets.
 #
 # ADR-008's scope table is meant to be the source for these, and it does not match them yet. It has
 # identity:read and identity:admin but no row for identity:self, and for the ledger it names only
@@ -28,7 +30,8 @@
 # table agrees, this file is the record. When the rows land there, keep the names identical here.
 #
 # Only `clientScopes` is declared, so nothing else in the realm is touched. Which clients get these
-# scopes is up to each client (25-vaullet-bruno-client.yaml, 27-vaullet-ledger-ops-client.yaml).
+# scopes is up to each client (25-vaullet-bruno-client.yaml, 27-vaullet-ledger-ops-client.yaml,
+# 30-wallet-auth-service.yaml).
 #
 # job.yaml sets IMPORT_MANAGED_CLIENTSCOPE=no-delete, and this file is why. Without it,
 # keycloak-config-cli's default (FULL) would delete, on this file's first import, every client scope
