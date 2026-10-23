@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
+#
+# Self registration (gitops#21): anyone can create a Vaullet sign-in on Keycloak's own page, and
+# Keycloak signs nobody in until they have proved their email address.
+#
+#   * registrationAllowed puts "Register" on the sign-in page of realm vaullet. The form asks for
+#     what the user profile requires of a user (30-wallet-auth-service.yaml): username, email, first
+#     and last name. account_id is not on it: the profile lets only admins see or edit it, so nobody
+#     chooses which account their tokens name. A forged account_id field on the form is ignored,
+#     and the account console's API refuses it (error-user-attribute-read-only).
+#   * verifyEmail makes Keycloak email a link and hold the sign-in until the user follows it. That
+#     needs the realm's SMTP server (05-vaullet-smtp.yaml), which is why this file comes after it.
+#     With it on, Keycloak 26 asks for no password on the form: the user chooses one after following
+#     the link, so nobody holds a password for an address they have not proved.
+#   * duplicateEmailsAllowed: false is Keycloak's default, written down because registration leans
+#     on it: one address is one person, for sign-in by email, for password resets and for
+#     wallet-auth-service's EMAIL_TAKEN.
+#
+# A registered user is a Keycloak user and nothing more: no role, no account_id, no wallet. The
+# account comes at their first sign-in, from wallet-auth-service's PUT /v1/accounts/me
+# (wallet-auth-service#24): it creates the account, writes account_id onto the user and grants
+# END_USER, and the outbox then opens the REAL and BONUS wallets. The next token carries account_id;
+# the one the user registered with does not.
+#
+# verifyEmail is realm-wide, not only for the form. Keycloak asks anyone whose address is unverified
+# to verify it at their next sign-in:
+#
+#   * end users that wallet-auth-service invites are verified by following the invitation;
+#   * the test users are created verified (20-vaullet-test-users.yaml);
+#   * staff created through /v1/staff are not: wallet-auth-service creates them unverified, so their
+#     first sign-in has one more step, the verification email, before the new password and TOTP;
+#   * an end user whose address was changed with PATCH /v1/accounts/{id}/identity verifies the new
+#     one before signing in again.
+#
+# Only these three settings are declared, so nothing else of the realm is touched by this file.
+#
+# Every cluster whose end users sign themselves up keeps this file. One whose users are only ever
+# invited leaves it out of kustomization.yaml, and its realm keeps Keycloak's default: no
+# registration. Taking the file out later does not switch registration off again: the import leaves
+# a setting no file declares as it is, so that takes registrationAllowed: false here instead.
+realm: vaullet
+registrationAllowed: true
+verifyEmail: true
+duplicateEmailsAllowed: false

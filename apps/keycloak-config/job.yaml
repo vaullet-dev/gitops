@@ -7,7 +7,8 @@
 #
 # What it may change, and what it may not:
 #   * Only the resource TYPES a realm file declares are touched: today realm roles, groups, users,
-#     client scopes, clients, the user profile and the realm's SMTP server. Identity providers,
+#     client scopes, clients, the user profile, the realm's SMTP server and the three settings of
+#     self registration (registration, email verification, unique email). Identity providers,
 #     flows and the rest of the realm are left exactly as they are, including everything configured
 #     by hand in the admin console.
 #   * Roles, groups, clients and client scopes are no-delete (IMPORT_MANAGED_*): taking one out of a

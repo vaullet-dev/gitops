@@ -13,6 +13,9 @@ resources:
 #
 # 05-vaullet-smtp.yaml is the realm's outgoing mail (Mailjet). Every cluster needs one, with its
 # own server and sender.
+# 06-vaullet-self-registration.yaml lets anyone register on the sign-in page, and has Keycloak
+# verify their email address first. It needs 05. A cluster whose users are only invited leaves it
+# out from the start; removing it later does not switch registration off (the file says why).
 # 12-vaullet-staff-group.yaml is the group that makes a user staff (wallet-auth-service /v1/staff).
 # Every cluster keeps it, and it comes before 20, whose staff test users are members.
 # 15-vaullet-client-scopes.yaml holds the scopes the services enforce. Every cluster keeps it.
@@ -29,6 +32,7 @@ configMapGenerator:
   - name: keycloak-realm-config
     files:
       - realm/05-vaullet-smtp.yaml
+      - realm/06-vaullet-self-registration.yaml
       - realm/10-vaullet-roles.yaml
       - realm/12-vaullet-staff-group.yaml
       - realm/15-vaullet-client-scopes.yaml
