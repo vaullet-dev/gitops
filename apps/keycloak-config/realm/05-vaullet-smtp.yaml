@@ -24,4 +24,4 @@ smtpServer:
   user: "$(env:SMTP_USERNAME)"
   password: "$(env:SMTP_PASSWORD)"
   from: no-reply@vaullet.dev
-  fromDisplayName: Vaullet
+  fromDisplayName: Vaullet.dev
