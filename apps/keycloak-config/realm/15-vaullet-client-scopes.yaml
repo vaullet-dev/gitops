@@ -1,14 +1,20 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
 #
 # Client scopes of realm `vaullet`: one per scope a service enforces, so that a token can carry it.
-# Today these are wallet-auth-service's three and wallet-ledger-service's two:
+# Today these are wallet-auth-service's three, wallet-ledger-service's two and
+# wallet-transaction-service's three:
 #
-#   identity:read    GET /v1/accounts/**
-#   identity:admin   POST, PATCH and DELETE on /v1/accounts/**
-#   identity:self    GET and PUT /v1/accounts/me: an end user's own account, and nobody else's
-#   ledger:read      every GET on the ledger: balances, reservations, wallets
-#   ledger:write     every POST, PATCH and DELETE on the ledger: holds placed and released, wallets
-#                    opened, frozen, unfrozen and closed
+#   identity:read      GET /v1/accounts/**
+#   identity:admin     POST, PATCH and DELETE on /v1/accounts/**
+#   identity:self      GET and PUT /v1/accounts/me: an end user's own account, and nobody else's
+#   ledger:read        every GET on the ledger: balances, reservations, wallets
+#   ledger:write       every POST, PATCH and DELETE on the ledger: holds placed and released,
+#                      wallets opened, frozen, unfrozen and closed
+#   transaction:self   POST and GET on /v1/transactions/** for an end user: debits of their own
+#                      account and reading its transactions, never a credit, never another account
+#   transaction:read   GET /v1/transactions/{id}: any transaction, for an operator's backend
+#   transaction:write  POST /v1/transactions: a debit or a credit on any account, for an
+#                      operator's backend
 #
 # Without the identity scopes no real token carries one, and every rule in wallet-auth-service
 # refuses everyone, SUPER_ADMIN included (its README, "Still open"). A scope says what the client
@@ -19,19 +25,34 @@
 # behind the token whose role could narrow it, so on the ledger the scope IS the permission. That is
 # why the two ledger scopes go only to clients that call the ledger, and never to a client people
 # sign in with: on bruno or swagger-ui every user's token would carry them, an end user's included.
-# Today that is ledger-ops (27-vaullet-ledger-ops-client.yaml), with both as default scopes, and
-# wallet-auth-service (30-wallet-auth-service.yaml), with ledger:write only, as an optional scope:
-# its outbox relay asks for it to open each new account's wallets.
+# Today that is ledger-ops (27-vaullet-ledger-ops-client.yaml), with both as default scopes, and two
+# services with ledger:write only, as an optional scope: wallet-auth-service
+# (30-wallet-auth-service.yaml), whose outbox relay asks for it to open each new account's wallets,
+# and wallet-transaction-service (31-wallet-transaction-service.yaml), which asks for it to hold
+# each debit's money.
+#
+# wallet-transaction-service does one or the other, depending on who calls (its TransactionAccess).
+# An end user's call needs transaction:self, the END_USER role and the account_id in the token, and
+# reaches that account alone. That is why transaction:self can be a default scope of bruno and
+# swagger-ui: every user's token there carries it, staff included, and only an end user's own
+# account gets past the rest of the rule. An operator's backend calls with client credentials, with
+# no person behind its token, so there transaction:read and transaction:write ARE the permission, as
+# the ledger's scopes are, and for the ledger's reason they go to no client people sign in with. No
+# operator's backend has a client yet, so no client offers them today: no real token carries them,
+# and every operator rule in the service refuses everyone.
 #
 # ADR-008's scope table is meant to be the source for these, and it does not match them yet. It has
-# identity:read and identity:admin but no row for identity:self, and for the ledger it names only
-# ledger:reserve (Transaction Service, POST and DELETE /reservations), while the ledger checks
-# ledger:read and ledger:write; wallet-ledger-service's README calls that unreconciled. Until the
-# table agrees, this file is the record. When the rows land there, keep the names identical here.
+# identity:read and identity:admin but no row for identity:self, and none for the three transaction
+# scopes. Its ledger rows have named ledger:read and ledger:write since 2026-10-22, but its first
+# row still gives Transaction Service ledger:reserve, which is not in this realm: the ledger checks
+# ledger:write on POST /v1/reservations, so that is what 31- offers (architecture's G6, and
+# wallet-ledger-service's README, which calls it unreconciled). Until the table agrees, this file is
+# the record. When the rows land there, keep the names identical here.
 #
 # Only `clientScopes` is declared, so nothing else in the realm is touched. Which clients get these
-# scopes is up to each client (25-vaullet-bruno-client.yaml, 27-vaullet-ledger-ops-client.yaml,
-# 30-wallet-auth-service.yaml).
+# scopes is up to each client (25-vaullet-bruno-client.yaml, 26-vaullet-swagger-ui-client.yaml,
+# 27-vaullet-ledger-ops-client.yaml, 30-wallet-auth-service.yaml,
+# 31-wallet-transaction-service.yaml).
 #
 # job.yaml sets IMPORT_MANAGED_CLIENTSCOPE=no-delete, and this file is why. Without it,
 # keycloak-config-cli's default (FULL) would delete, on this file's first import, every client scope
@@ -70,6 +91,27 @@ clientScopes:
       display.on.consent.screen: "false"
   - name: "ledger:write"
     description: Change the ledger in wallet-ledger-service (POST, PATCH and DELETE)
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+  # wallet-transaction-service's three (its TransactionAccess). transaction:self is an end user's,
+  # and the service checks the END_USER role and the token's account_id with it. The other two are
+  # an operator's backend's, and like the ledger's, nothing else in the token narrows them.
+  - name: "transaction:self"
+    description: An end user's own debits and transactions in wallet-transaction-service (POST, GET)
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+  - name: "transaction:read"
+    description: Read any transaction in wallet-transaction-service (GET /v1/transactions/{id})
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+  - name: "transaction:write"
+    description: Record a debit or a credit on any account in wallet-transaction-service (POST)
     protocol: openid-connect
     attributes:
       include.in.token.scope: "true"

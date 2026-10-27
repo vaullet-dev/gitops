@@ -1,0 +1,60 @@
+# Wave 2, with the other services: after the operators (-1), the databases (1),
+# and therefore after transactions_db exists and its two service roles are declared.
+#
+# The service repository ships the Flyway Job (wave 0), the Deployment and the Service
+# `transaction-service` (wave 1), and the HTTPRoute that serves it at
+# vaullet.dev/api/transactions, as wallet-auth's does at /api/auth. Its OAUTH2_ISSUER_URI
+# must match Keycloak's issuer, https://vaullet.dev/auth/realms/vaullet (keycloak.yaml),
+# and its database is transactions_db on money-rw.postgres.svc
+# (apps/db/postgres/money.yaml). It calls the ledger inside the cluster, at
+# ledger-service.wallet-ledger.svc, with a token from its own client,
+# wallet-transaction-service (apps/keycloak-config/realm/31-*), and its
+# TRANSACTION_CURRENCY must be the ledger's LEDGER_CURRENCY: EUR, in
+# wallet-ledger-service's kustomization.yaml.
+#
+# The first time, in this order:
+#
+#   1. bootstrap/03-openbao.sh onboard wallet-transaction, and the three `bao kv put`s in
+#      the README: kv/wallet-transaction/db-migrator, db-app and keycloak-client.
+#   2. The release that ships those manifests, 0.1.0. This Application deploys whatever
+#      tag that repository's kustomization pins, so the image has to exist before this
+#      file does.
+#   3. This file.
+#
+# The order matters beyond this Application. openbao-wallet-transaction logs in as
+# `secrets-reader` in wallet-transaction, which only this Application creates, and that
+# store also reads the client's secret for keycloak-config. Until this Application has
+# synced once, the realm import waits, every realm file with it, and so do the two
+# roles' passwords in postgres. Until that import has run, Keycloak does not know the
+# client, so the service gets no token and no debit gets as far as the ledger.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wallet-transaction
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: apps
+  source:
+    repoURL: https://github.com/vaullet-dev/wallet-transaction-service.git
+    targetRevision: master
+    path: .
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wallet-transaction
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+    # Retry without limit, for wallet-ledger.yaml's reason: the first sync can race itself.
+    # transaction_migrator gets its password only after this Application has created
+    # secrets-reader, and the Flyway Job the same sync starts can ask for it sooner. The Job
+    # also fails if it runs before CloudNativePG has made transaction_app, because V1 then
+    # tries to create that role, and transaction_migrator may not create roles. Without a
+    # retry nothing runs a failed Job again; with one, a later attempt goes through.
+    retry:
+      limit: -1
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

@@ -1,0 +1,42 @@
+# The OpenBao store for wallet-transaction's credentials. Here rather than in the service
+# repository for wallet-auth.yaml's reason: it is CLUSTER-scoped, and a service cannot grant
+# itself access to a secret store.
+#
+# The same three namespaces as wallet-ledger's, for the same three jobs:
+#
+#   wallet-transaction  the service and its Flyway Job, to CONNECT with the credentials, and the
+#                       service to get its own token from Keycloak with the client secret
+#   postgres            CloudNativePG, to SET transaction_migrator's and transaction_app's
+#                       passwords to the same values (apps/db/postgres/credentials.yaml)
+#   keycloak            keycloak-config-cli, to SET client wallet-transaction-service's secret to
+#                       the value in kv/wallet-transaction/keycloak-client
+#
+# One value, one path, two readers, as there. Unlike the ledger's, the client secret's second
+# reader is the service itself, as with wallet-auth's: it signs in to Keycloak for the
+# ledger:write token that each debit's hold needs (apps/keycloak-config/realm/31-*).
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: openbao-wallet-transaction
+spec:
+  conditions:
+    - namespaces: [ wallet-transaction, postgres, keycloak ]
+  provider:
+    vault:
+      server: https://openbao.openbao.svc:8200
+      path: kv
+      version: v2
+      # OpenBao serves a certificate from its own namespaced cert-manager CA, so
+      # the public trust store is no help here.
+      caProvider:
+        type: Secret
+        name: openbao-ca
+        namespace: openbao
+        key: ca.crt
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: wallet-transaction # created by: 03-openbao.sh onboard wallet-transaction
+          serviceAccountRef:
+            name: secrets-reader
+            namespace: wallet-transaction

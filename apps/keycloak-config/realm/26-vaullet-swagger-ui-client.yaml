@@ -33,6 +33,7 @@ clients:
     frontchannelLogout: false
     redirectUris:
       - https://vaullet.dev/api/auth/swagger-ui/oauth2-redirect.html
+      - https://vaullet.dev/api/transactions/swagger-ui/oauth2-redirect.html
     # Swagger UI fetches the token from the page. vaullet.dev serves both the page and Keycloak, so
     # today that is same-origin; "+" (the redirect URIs' origins) keeps it working if they ever split.
     webOrigins:
@@ -51,5 +52,6 @@ clients:
       - "identity:read"
       - "identity:admin"
       - "identity:self"
+      - "transaction:self"
       - account-id
     optionalClientScopes: []
