@@ -83,10 +83,12 @@ spec:
 
   managed:
     roles:
-      # Owner of transactions_db. No passwordSecret: CNPG then leaves the
-      # password unset, so the role exists and owns its schema but cannot log
-      # in. The password arrives from OpenBao via ESO when the service is wired,
-      # which is the only way ADR-003's "no credential in git" holds.
+      # Owner of transactions_db (the Database below), as `vaullet` owns vaullet_db.
+      # wallet-transaction-service does not connect as it: its Flyway Job runs as
+      # transaction_migrator, a member of this role, and the service as
+      # transaction_app, both below. Its own password comes from OpenBao, at
+      # kv/postgres/transactions, which is the only way ADR-003's "no credential in
+      # git" holds for a role that can log in.
       - name: transactions
         ensure: present
         login: true
@@ -127,6 +129,42 @@ spec:
         comment: the running wallet-ledger-service; no DDL, no DELETE
         passwordSecret:
           name: ledger-app-db-credentials
+      # The identity that runs Flyway for wallet-transaction-service, and the ONLY one with
+      # DDL rights on transactions_db. The ledger's split, for the ledger's reason: the
+      # running service holds a role with no DDL at all.
+      #
+      # inRoles: [transactions] for the ledger's reason too: `transactions` owns
+      # transactions_db, and CloudNativePG can declare membership but not an arbitrary
+      # GRANT. The membership is also what lets Flyway create in schema public, which
+      # PostgreSQL 15 and later leave to the database's owner. Same cost as well: what
+      # Flyway creates belongs to transaction_migrator, so transaction_app can touch
+      # nothing until the service's own migrations grant it.
+      #
+      # A member needs its role to exist first, so this one also waits for `transactions`
+      # and that role's password, kv/postgres/transactions (credentials.yaml).
+      - name: transaction_migrator
+        ensure: present
+        login: true
+        inRoles: [ transactions ]
+        comment: runs Flyway for wallet-transaction-service; holds DDL on transactions_db
+        passwordSecret:
+          name: transaction-migrator-db-credentials
+      # What the RUNNING wallet-transaction-service connects as. No inRoles: it inherits
+      # nothing, and the service's migrations grant it what each table needs, table by
+      # table, and never DELETE or TRUNCATE: a transaction ends DECLINED, VOIDED, EXPIRED
+      # or CAPTURED, and is never erased. It owns nothing either, so the service cannot
+      # drop a constraint its migrations wrote: only a table's owner can.
+      #
+      # It has to exist before those migrations run, and transaction_migrator cannot create
+      # roles, so it comes from here, like its password. The service's V1__app_role.sql
+      # creates it NOLOGIN only where it is missing, for a laptop's or a test's database;
+      # here it finds this one and leaves its login and password as they are.
+      - name: transaction_app
+        ensure: present
+        login: true
+        comment: the running wallet-transaction-service; no DDL, no DELETE
+        passwordSecret:
+          name: transaction-app-db-credentials
       # pgAdmin's login (apps/pgadmin, gitops#33): reads and writes every table, in every
       # database of this cluster, and nothing more. pg_read_all_data and pg_write_all_data
       # are table-level only: no DDL, no roles, no superuser, and the ledger journal's

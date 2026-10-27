@@ -92,7 +92,7 @@ left panel, and the filter goes into the URL (`/applications?proj=infra`).
 |---|---|---|
 | `infra` | crds, cert-manager, traefik, local-path-provisioner, external-secrets, cloudnative-pg, argo-rollouts, argocd | yes — CRDs, ClusterIssuers, GatewayClass, StorageClass |
 | `platform` | openbao, openbao-ui, secret-stores, postgres, keycloak, keycloak-config, pgadmin | yes, for now — ClusterSecretStores, the charts' cluster RBAC |
-| `apps` | web, wallet-auth, wallet-ledger, and every `wallet-*` service to come | **no**, except `Namespace` |
+| `apps` | web, wallet-auth, wallet-ledger, wallet-transaction, and every `wallet-*` service to come | **no**, except `Namespace` |
 
 `apps` (called `services` until 2026-09-30) is also restricted by source (`github.com/vaullet-dev/*`) and by
 destination namespace (`web`, `wallet-*`), so a service cannot deploy into
@@ -232,6 +232,26 @@ running ledger connect with them, and CloudNativePG sets the roles to the same
 values. The third is the secret of client `ledger-ops`, which is how a person
 gets a token for the ledger (see "Reaching things").
 
+**wallet-transaction** is onboarded the same way, and also before its Application
+first syncs (`clusters/prod/wallet-transaction.yaml` has the order):
+
+```sh
+bootstrap/03-openbao.sh onboard wallet-transaction
+bao kv put kv/wallet-transaction/db-migrator     password="$(openssl rand -base64 24)"
+bao kv put kv/wallet-transaction/db-app          password="$(openssl rand -base64 24)"
+bao kv put kv/wallet-transaction/keycloak-client secret="$(openssl rand -base64 32)"
+```
+
+The first two are the passwords of `transaction_migrator` and `transaction_app`,
+its roles in `transactions_db` on the `money` cluster, used and set exactly as the
+ledger's are. `transaction_migrator` is a member of `transactions`, the role that
+owns `transactions_db`, whose own password is `kv/postgres/transactions`
+(`apps/db/postgres/credentials.yaml`). CloudNativePG cannot add a member to a role
+that does not exist yet, so `bao kv metadata get kv/postgres/transactions` should
+find it first. The third is the secret of client `wallet-transaction-service`.
+Unlike `ledger-ops`'s, the service itself authenticates with it: it is how the
+service gets the `ledger:write` token that holds each debit's money.
+
 **pgadmin** needs no onboarding. It holds no OpenBao secrets: External Secrets generates
 its two passwords once, on the first sync, and nothing else connects with them. pgAdmin's
 login is `admin@vaullet.dev` with the password from Secret `pgadmin-admin` in `pgadmin`.
@@ -306,6 +326,7 @@ whose networks work best.
 | Traefik dashboard | not exposed | SSH tunnel |
 | OpenBao UI and API | `https://bao.vaullet.dev` | GitHub login (one allowed account, oauth2-proxy), then an OpenBao token |
 | The ledger (wallet-ledger-service) | **no route**: ClusterIP `ledger-service` in `wallet-ledger` | SSH tunnel, then a token from client `ledger-ops` |
+| Transactions (wallet-transaction-service) | `https://vaullet.dev/api/transactions`, Swagger UI at `/api/transactions/swagger-ui.html` | an end user's token from `swagger-ui` or `bruno` (`transaction:self`); no client holds the operator scopes yet |
 | pgAdmin (all three Postgres clusters, read/write) | **no route**: ClusterIP `pgadmin` in `pgadmin` | SSH tunnel, then pgAdmin's login (`admin@vaullet.dev`), then `dba_rw`'s password; both generated, see below |
 | Argo Rollouts UI | **not deployed** | see TODO.md |
 
@@ -346,6 +367,22 @@ TOKEN=$(curl -s https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/
   --data-urlencode client_secret="$(bao kv get -field=secret kv/wallet-ledger/keycloak-client)" \
   | jq -r .access_token)
 curl -H "Authorization: Bearer $TOKEN" http://localhost:18081/v1/wallets
+
+# Transactions at https://vaullet.dev/api/transactions, with Swagger UI under it, where
+# Authorize signs in through client swagger-ui. Only an end user gets through today: the
+# token carries transaction:self, END_USER and the user's account_id, and debits that
+# account alone. No client offers transaction:read or transaction:write yet
+# (apps/keycloak-config/realm/15-* says why), so a staff token, which names no account, is
+# refused. On a demo cluster, test-end-user's token from client bruno, and a 1.00 hold. Until
+# money can be deposited, its wallets are empty, so the answer is 409 INSUFFICIENT_FUNDS and
+# the transaction is recorded DECLINED; the 201 needs CASH in the ledger first:
+TOKEN=$(curl -s https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=bruno -d username=test-end-user \
+  --data-urlencode password="$(bao kv get -field=password kv/keycloak/test-users)" \
+  | jq -r .access_token)
+curl https://vaullet.dev/api/transactions/v1/transactions \
+  -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $(uuidgen)" \
+  -H 'Content-Type: application/json' -d '{"type": "DEBIT", "amount": "1.00", "currency": "EUR"}'
 
 # pgAdmin at http://localhost:5050. The three clusters are already listed under
 # "vaullet". Its rights are table data only, but that includes the money database, so

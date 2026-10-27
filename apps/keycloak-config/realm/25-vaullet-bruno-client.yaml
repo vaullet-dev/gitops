@@ -28,6 +28,12 @@
 # `account-id` puts the user's account_id in the token (16-vaullet-account-id.yaml), and
 # `identity:self` lets test-end-user read its own account at GET /v1/accounts/me.
 #
+# `transaction:self` lets test-end-user debit its own account in wallet-transaction-service and
+# read those transactions back. That service also checks END_USER and the account_id (its
+# TransactionAccess), so the staff test users carry the scope and are still refused. Not
+# transaction:read or transaction:write, and not the ledger's: each is the whole permission by
+# itself, and on this client every user's token would carry it (15-vaullet-client-scopes.yaml).
+#
 # The default list names Keycloak's own six as well. When a client names either list, Keycloak
 # removes every scope the lists do not name (RepresentationToModel.updateClientScopes). Naming only
 # the identity scopes would drop `roles`, and realm_access.roles with it, and every call would then
@@ -65,5 +71,6 @@ clients:
       - "identity:read"
       - "identity:admin"
       - "identity:self"
+      - "transaction:self"
       - account-id
     optionalClientScopes: []

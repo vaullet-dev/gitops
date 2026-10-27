@@ -254,3 +254,21 @@ reserved and deliberately not wired up yet.
       The three-VM prod cluster that made etcd quorum, Kafka RF=3 and live node
       drains *real* does not exist on this box. Better a reviewer reads it from
       you than discovers it.
+
+- [ ] **No client holds `transaction:read` or `transaction:write`.** They are
+      wallet-transaction-service's operator scopes and, like the ledger's, the
+      whole permission by themselves, so they cannot go on `bruno` or
+      `swagger-ui`, where every user's token would carry them
+      (`realm/15-vaullet-client-scopes.yaml`). Until an operator's backend gets
+      a client-credentials client of its own, the way `ledger-ops` is one,
+      nothing can credit an account or read another account's transactions:
+      only end users' own debits and reads work.
+
+- [ ] **A second service holds `ledger:write`.** wallet-transaction-service
+      asks for it to hold each debit's money
+      (`realm/31-wallet-transaction-service.yaml`), next to wallet-auth-service's
+      outbox relay, and the same scope opens, freezes and closes any account's
+      wallets. Architecture's G6 accepted that only while the relay was the
+      only holder, and proposed splitting it first, with ADR-008's
+      `ledger:reserve` for holds. The split changes the ledger's checks, the
+      realm, both clients and the scope the service asks for, together.

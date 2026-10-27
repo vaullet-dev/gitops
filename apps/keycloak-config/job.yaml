@@ -93,6 +93,9 @@ spec:
             # $(env:LEDGER_OPS_CLIENT_SECRET) in 27-vaullet-ledger-ops-client.yaml.
             - name: LEDGER_OPS_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: ledger-ops-client, key: LEDGER_OPS_CLIENT_SECRET } }
+            # $(env:WALLET_TRANSACTION_CLIENT_SECRET) in 31-wallet-transaction-service.yaml.
+            - name: WALLET_TRANSACTION_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: wallet-transaction-client, key: WALLET_TRANSACTION_CLIENT_SECRET } }
             # $(env:SMTP_USERNAME) and $(env:SMTP_PASSWORD) in 05-vaullet-smtp.yaml: Mailjet's API key
             # and secret key, from OpenBao kv/keycloak/smtp.
             - name: SMTP_USERNAME

@@ -6,5 +6,6 @@ kind: Kustomization
 resources:
   - wallet-auth.yaml
   - wallet-ledger.yaml
+  - wallet-transaction.yaml
   - keycloak.yaml
   - openbao.yaml
