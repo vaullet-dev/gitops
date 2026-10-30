@@ -100,14 +100,16 @@ clients:
     # (address, phone, offline_access, microprofile-jwt, organization): nobody signs in through this
     # client, so nothing asked for them.
     #
-    # What the scope allows is the ledger's to say (15-vaullet-client-scopes.yaml): any account's
-    # wallets and holds, not only a new account's wallets. The reverse holds too: the relay's token
-    # passes the Admin API as the service's own does, manage-users and all. The Admin API checks the
-    # service account's roles within the client's role scope, and fullScopeAllowed puts all of them
-    # in scope whatever the token asked for, so the ledger receives a token that could manage users.
-    # Keeping the two apart takes a second client, or fullScopeAllowed: false and the three roles
-    # behind a second optional scope that only the Admin API calls ask for; on 26.7.4 a token
-    # without that scope then gets 403 from the Admin API.
+    # What the scope allows is the ledger's to say (15-vaullet-client-scopes.yaml): opening,
+    # freezing and closing any account's wallets, not only opening a new account's. Not holds: those
+    # need ledger:reserve since wallet-ledger-service#23 (architecture's G6), which this client is
+    # never given. The reverse holds too: the relay's token passes the Admin API as the service's
+    # own does, manage-users and all. The Admin API checks the service account's roles within the
+    # client's role scope, and fullScopeAllowed puts all of them in scope whatever the token asked
+    # for, so the ledger receives a token that could manage users. Keeping the two apart takes a
+    # second client, or fullScopeAllowed: false and the three roles behind a second optional scope
+    # that only the Admin API calls ask for; on 26.7.4 a token without that scope then gets 403 from
+    # the Admin API.
     defaultClientScopes:
       - basic
       - acr

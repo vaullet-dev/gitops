@@ -15,11 +15,13 @@
 # A token comes from the secret and from nothing else. The secret is OpenBao
 # kv/wallet-ledger/keycloak-client, which the import sets as $(env:LEDGER_OPS_CLIENT_SECRET).
 #
-# The default scopes are ledger:read and ledger:write, what the ledger checks
-# (15-vaullet-client-scopes.yaml), and nothing else. Naming the lists removes every scope they do
-# not name (see 25-), and that is the point here: no profile, email, roles or account-id, because no
-# user is behind the token; no web-origins, because no browser calls with it; no optional scopes, so
-# a `scope` parameter cannot add one.
+# The default scopes are ledger:read, ledger:write and ledger:reserve, what the ledger checks
+# (15-vaullet-client-scopes.yaml), and nothing else: staff read, change wallets and place or release
+# holds by hand, so this is the one client with all three. ledger:reserve since gitops#38, when
+# holds stopped being ledger:write's. Naming the lists removes every scope they do not name (see
+# 25-), and that is the point here: no profile, email, roles or account-id, because no user is
+# behind the token; no web-origins, because no browser calls with it; no optional scopes, so a
+# `scope` parameter cannot add one.
 #
 # Not `basic` either, although bruno and swagger-ui keep it. It holds the `sub` and `auth_time`
 # mappers, and a client-credentials token needs neither: Keycloak sets `sub` to the service
@@ -55,4 +57,5 @@ clients:
     defaultClientScopes:
       - "ledger:read"
       - "ledger:write"
+      - "ledger:reserve"
     optionalClientScopes: []

@@ -250,7 +250,7 @@ owns `transactions_db`, whose own password is `kv/postgres/transactions`
 that does not exist yet, so `bao kv metadata get kv/postgres/transactions` should
 find it first. The third is the secret of client `wallet-transaction-service`.
 Unlike `ledger-ops`'s, the service itself authenticates with it: it is how the
-service gets the `ledger:write` token that holds each debit's money.
+service gets the `ledger:reserve` token that holds each debit's money.
 
 **pgadmin** needs no onboarding. It holds no OpenBao secrets: External Secrets generates
 its two passwords once, on the first sync, and nothing else connects with them. pgAdmin's
@@ -358,8 +358,8 @@ ssh -L 8200:localhost:8200 root@<IP> \
 # collection expects). It is not on vaullet.dev at all: ADR-008
 # admits service tokens only, from inside the cluster. With the tunnel open, call
 # it with a token from client ledger-ops (apps/keycloak-config/realm/27-*), which
-# carries ledger:read and ledger:write and names the client, not you. A token
-# expires in minutes: fetch a new one rather than keeping it.
+# carries ledger:read, ledger:write and ledger:reserve and names the client, not
+# you. A token expires in minutes: fetch a new one rather than keeping it.
 ssh -L 18081:localhost:18081 root@<IP> \
   'kubectl -n wallet-ledger port-forward svc/ledger-service 18081:80'
 TOKEN=$(curl -s https://vaullet.dev/auth/realms/vaullet/protocol/openid-connect/token \
