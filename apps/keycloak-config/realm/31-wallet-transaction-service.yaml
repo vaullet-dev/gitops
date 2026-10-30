@@ -1,36 +1,44 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
 #
 # The client wallet-transaction-service calls the ledger as (ADR-008, Layer 3). Every debit asks the
-# ledger to hold its money with POST /v1/reservations, and the ledger checks ledger:write on that
-# call. The token is the service's own, never its caller's: the ledger trusts this service, which
-# has already decided who may ask, and a user's token is never a way to the ledger.
+# ledger to hold its money with POST /v1/reservations, and the ledger checks ledger:reserve on that
+# call (wallet-ledger-service#23). The token is the service's own, never its caller's: the ledger
+# trusts this service, which has already decided who may ask, and a user's token is never a way to
+# the ledger.
 #
 # Confidential, and client credentials only, like ledger-ops (27-): no browser login, no password
 # grant, no implicit flow. A token comes from the secret and from nothing else. The secret is
 # OpenBao kv/wallet-transaction/keycloak-client, the same value the service authenticates with,
 # which the import sets as $(env:WALLET_TRANSACTION_CLIENT_SECRET).
 #
-# ledger:write is OPTIONAL, as on wallet-auth-service (30-): a token carries it only when asked for
-# with scope=ledger:write. The service asks for it on every token, because it fetches tokens for the
-# ledger and for nothing else. Not ledger:read: it places holds and reads nothing back.
+# ledger:reserve is a DEFAULT scope: every token this client gets carries it, asked for or not. That
+# is what lets the ledger switch to it with no gap (gitops#38). 0.1.0 asks for ledger:write, which
+# was the scope for holds before the split, and gets ledger:reserve with it, but only in a token
+# fetched after this import: one it already holds stays as it was until it expires, five minutes on
+# this realm, so the ledger's switch waits that long, or for a restart. From
+# wallet-transaction-service#6 on, the service asks for ledger:reserve by name, so a client without
+# it fails at Keycloak, named, rather than at the ledger. Not ledger:read: it places holds and reads
+# nothing back.
+#
+# ledger:write is OPTIONAL, and on its way out. 0.1.0 asks for it on every token, and Keycloak
+# refuses a token for a scope the client does not offer (invalid_scope), so it stays while any pod
+# of 0.1.0 runs. gitops#39 takes it off once #6's release is deployed, and with it the last way this
+# client's token could open, freeze or close a wallet.
 #
 # Both lists are named, for 30-'s reason: then they are the same on every cluster, whether the
-# import creates the client or updates it. The default list is empty, for 27-'s: no profile, email,
-# roles or account-id, because no user is behind the token; no web-origins, because no browser
-# calls with it; and not basic, because a client-credentials token gets its `sub` without it. That
-# leaves service_account, which Keycloak gives every client with a service account (27-), and
-# ledger:write when it is asked for.
+# import creates the client or updates it. The default list is ledger:reserve alone, for 27-'s
+# reason: no profile, email, roles or account-id, because no user is behind the token; no
+# web-origins, because no browser calls with it; and not basic, because a client-credentials token
+# gets its `sub` without it. That leaves service_account, which Keycloak gives every client with a
+# service account (27-), ledger:reserve, and ledger:write when it is asked for.
 #
 # fullScopeAllowed: false. The ledger needs no realm role, and with no role mapped to this client
 # none can reach its tokens, not even one granted to its service account by hand later. Nor does
 # this file give the service account a role, unlike 30-: the service manages nothing in the realm.
 #
-# What ledger:write allows is the ledger's to say (15-vaullet-client-scopes.yaml): a hold on any
-# account, and opening, freezing and closing any account's wallets as well. This makes the service
-# the second one holding it, after wallet-auth-service's outbox relay. Architecture's G6 accepted
-# the scope as it is only while the relay was the only one, and proposed splitting it first, with
-# ADR-008's ledger:reserve for holds. Until it is split, the service's own code is all that keeps
-# its token to POST /v1/reservations.
+# What ledger:reserve allows is the ledger's to say (15-vaullet-client-scopes.yaml): a hold placed
+# or released on any account, and nothing else. Which accounts a debit may hold is this service's
+# own rule (its TransactionAccess), checked before the ledger is asked.
 #
 # Every cluster that runs wallet-transaction-service keeps this file. Without the client the service
 # gets no token, and no debit reaches the ledger.
@@ -53,6 +61,7 @@ clients:
     directAccessGrantsEnabled: false
     frontchannelLogout: false
     fullScopeAllowed: false
-    defaultClientScopes: []
+    defaultClientScopes:
+      - "ledger:reserve"
     optionalClientScopes:
       - "ledger:write"

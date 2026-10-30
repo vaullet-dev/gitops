@@ -13,7 +13,7 @@
 #
 # One value, one path, two readers, as there. Unlike the ledger's, the client secret's second
 # reader is the service itself, as with wallet-auth's: it signs in to Keycloak for the
-# ledger:write token that each debit's hold needs (apps/keycloak-config/realm/31-*).
+# ledger:reserve token that each debit's hold needs (apps/keycloak-config/realm/31-*).
 apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:

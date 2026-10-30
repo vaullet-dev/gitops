@@ -1,15 +1,16 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/adorsys/keycloak-config-cli/main/src/main/resources/keycloak-config-cli-import-schema.json
 #
 # Client scopes of realm `vaullet`: one per scope a service enforces, so that a token can carry it.
-# Today these are wallet-auth-service's three, wallet-ledger-service's two and
+# Today these are wallet-auth-service's three, wallet-ledger-service's three and
 # wallet-transaction-service's three:
 #
 #   identity:read      GET /v1/accounts/**
 #   identity:admin     POST, PATCH and DELETE on /v1/accounts/**
 #   identity:self      GET and PUT /v1/accounts/me: an end user's own account, and nobody else's
 #   ledger:read        every GET on the ledger: balances, reservations, wallets
-#   ledger:write       every POST, PATCH and DELETE on the ledger: holds placed and released,
-#                      wallets opened, frozen, unfrozen and closed
+#   ledger:reserve     POST and DELETE /v1/reservations: holds placed and released, the money path
+#   ledger:write       POST, PATCH and DELETE on /v1/wallets: wallets opened, frozen, unfrozen and
+#                      closed
 #   transaction:self   POST and GET on /v1/transactions/** for an end user: debits of their own
 #                      account and reading its transactions, never a credit, never another account
 #   transaction:read   GET /v1/transactions/{id}: any transaction, for an operator's backend
@@ -23,13 +24,18 @@
 #
 # wallet-ledger-service checks the scope alone. Its callers are services (ADR-008), with no person
 # behind the token whose role could narrow it, so on the ledger the scope IS the permission. That is
-# why the two ledger scopes go only to clients that call the ledger, and never to a client people
-# sign in with: on bruno or swagger-ui every user's token would carry them, an end user's included.
-# Today that is ledger-ops (27-vaullet-ledger-ops-client.yaml), with both as default scopes, and two
-# services with ledger:write only, as an optional scope: wallet-auth-service
-# (30-wallet-auth-service.yaml), whose outbox relay asks for it to open each new account's wallets,
-# and wallet-transaction-service (31-wallet-transaction-service.yaml), which asks for it to hold
-# each debit's money.
+# why the ledger scopes go only to clients that call the ledger, and never to a client people sign
+# in with: on bruno or swagger-ui every user's token would carry them, an end user's included.
+# Today that is ledger-ops (27-vaullet-ledger-ops-client.yaml), with all three as default scopes,
+# and one service for each of the two that change the ledger: wallet-auth-service
+# (30-wallet-auth-service.yaml), whose outbox relay asks for ledger:write to open each new
+# account's wallets, and wallet-transaction-service (31-wallet-transaction-service.yaml), which asks
+# for ledger:reserve to hold each debit's money.
+#
+# Holds and wallets were one scope, ledger:write, until gitops#38 and wallet-ledger-service#23
+# (architecture's G6). Split, a token that opens wallets cannot hold money, and a token that holds
+# money cannot open, freeze or close a wallet. 31- keeps ledger:write as well until gitops#39,
+# because its first release asks for it; the file says why.
 #
 # wallet-transaction-service does one or the other, depending on who calls (its TransactionAccess).
 # An end user's call needs transaction:self, the END_USER role and the account_id in the token, and
@@ -43,10 +49,9 @@
 #
 # ADR-008's scope table is meant to be the source for these, and it does not match them yet. It has
 # identity:read and identity:admin but no row for identity:self, and none for the three transaction
-# scopes. Its ledger rows have named ledger:read and ledger:write since 2026-10-22, but its first
-# row still gives Transaction Service ledger:reserve, which is not in this realm: the ledger checks
-# ledger:write on POST /v1/reservations, so that is what 31- offers (architecture's G6, and
-# wallet-ledger-service's README, which calls it unreconciled). Until the table agrees, this file is
+# scopes. Its first row has always given Transaction Service ledger:reserve, which this realm has
+# since gitops#38; its other ledger rows still have ledger-ops change everything with ledger:write,
+# and architecture#7 brings them and the transaction rows in. Until the table agrees, this file is
 # the record. When the rows land there, keep the names identical here.
 #
 # Only `clientScopes` is declared, so nothing else in the realm is touched. Which clients get these
@@ -81,16 +86,25 @@ clientScopes:
     attributes:
       include.in.token.scope: "true"
       display.on.consent.screen: "false"
-  # The ledger's two (wallet-ledger-service, "Security"). Unlike the three above, nothing else in
-  # the token narrows them: whoever holds ledger:write may change any account's holds and wallets.
+  # The ledger's three (wallet-ledger-service, "Security"). Unlike the three above, nothing else in
+  # the token narrows them: whoever holds ledger:reserve may hold and release money on any account,
+  # and whoever holds ledger:write may open, freeze and close any account's wallets.
   - name: "ledger:read"
     description: Read the ledger in wallet-ledger-service (every GET)
     protocol: openid-connect
     attributes:
       include.in.token.scope: "true"
       display.on.consent.screen: "false"
+  # ADR-008's scope for the money path. Its own, so that holding money and changing wallets are
+  # never the same grant (architecture's G6).
+  - name: "ledger:reserve"
+    description: Place and release holds in wallet-ledger-service (POST and DELETE /v1/reservations)
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
   - name: "ledger:write"
-    description: Change the ledger in wallet-ledger-service (POST, PATCH and DELETE)
+    description: Open, freeze and close wallets in wallet-ledger-service (/v1/wallets)
     protocol: openid-connect
     attributes:
       include.in.token.scope: "true"

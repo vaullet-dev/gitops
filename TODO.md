@@ -264,11 +264,11 @@ reserved and deliberately not wired up yet.
       nothing can credit an account or read another account's transactions:
       only end users' own debits and reads work.
 
-- [ ] **A second service holds `ledger:write`.** wallet-transaction-service
-      asks for it to hold each debit's money
-      (`realm/31-wallet-transaction-service.yaml`), next to wallet-auth-service's
-      outbox relay, and the same scope opens, freezes and closes any account's
-      wallets. Architecture's G6 accepted that only while the relay was the
-      only holder, and proposed splitting it first, with ADR-008's
-      `ledger:reserve` for holds. The split changes the ledger's checks, the
-      realm, both clients and the scope the service asks for, together.
+- [ ] **wallet-transaction-service's client still offers `ledger:write`.**
+      Holds have their own scope since gitops#38 and wallet-ledger-service#23,
+      `ledger:reserve` (architecture's G6), and the client has it as a default
+      scope. It keeps `ledger:write` only because 0.1.0 asks for it, and
+      Keycloak refuses a token for a scope the client does not offer. Take it
+      off (gitops#39) once the release with wallet-transaction-service#6, which
+      asks for `ledger:reserve`, is deployed. Until then its token can still
+      open, freeze and close any account's wallets.
